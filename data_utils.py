@@ -111,14 +111,14 @@ def extract_entities(sent, all_ents, prons, prev_ents=None, resolve_prons=False,
 
 
 def annoying_number_word(sent, i):
-    ignores = {"three point", "three - point", "three - pt", "three pt"}
+    ignores = {"three point", "three - point", "three - pt", "three pt", "three - pointer",
+               "three - pointers", "three pointers", "three - points"}
     return " ".join(sent[i:i + 3]) not in ignores and " ".join(sent[i:i + 2]) not in ignores
 
 
 def extract_numbers(sent):
     sent_nums = []
     i = 0
-    ignores = {"three point", "three-point", "three-pt", "three pt"}
     # print sent
     while i < len(sent):
         toke = sent[i]
@@ -131,16 +131,14 @@ def extract_numbers(sent):
         if a_number:
             sent_nums.append((i, i + 1, int(toke)))
             i += 1
-        elif toke in number_words and not annoying_number_word(sent, i):  # get longest span  (this is kind of stupid)
+        elif toke in number_words and annoying_number_word(sent, i):  # get longest span  (this is kind of stupid)
             j = 1
-            while i + j <= len(sent) and sent[i + j] in number_words and not annoying_number_word(sent, i + j):
+            while i + j <= len(sent) and sent[i + j] in number_words and annoying_number_word(sent, i + j):
                 j += 1
             try:
                 sent_nums.append((i, i + j, text2num(" ".join(sent[i:i + j]))))
             except NumberException:
-                print sent
-                print sent[i:i + j]
-                assert False
+                sent_nums.append((i, i + 1, text2num(sent[i])))
             i += j
         else:
             i += 1
@@ -269,7 +267,6 @@ def get_datasets(path="../boxscore-data/rotowire"):
         for i, entry in enumerate(dataset):
             summ = " ".join(entry['summary'])
             append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, nugz)
-
         extracted_stuff.append(nugz)
 
     del all_ents
@@ -445,6 +442,20 @@ def save_full_sent_data(outfile, path="../boxscore-data/rotowire", multilabel_tr
             f.write("%s %d \n" % (revlabels[i], i))
 
 
+def convert_aux(additional):
+    aux = 'NONE'
+    if additional is None:
+        aux = "NONE"
+    elif isinstance(additional, unicode):
+        aux = str(additional)
+    elif isinstance(additional, bool):
+        if additional:
+            aux = "HOME"
+        else:
+            aux = "AWAY"
+    return aux
+
+
 def write_data_to_line(data, outfile, filter_none=True):
     sent = ' '.join(data[0])
     rels = data[1]
@@ -452,24 +463,128 @@ def write_data_to_line(data, outfile, filter_none=True):
         if filter_none and rel[2] == "NONE":
             continue
         additional = rel[3]
-        aux = 'NONE'
-        if additional is None:
-            aux = "NONE"
-        elif isinstance(additional, unicode):
-            aux = str(additional)
-        elif isinstance(additional, bool):
-            if additional:
-                aux = "HOME"
-            else:
-                aux = "AWAY"
+        aux = convert_aux(additional)
         line_to_write = u'\t'.join(map(unicode, (sent, rel[0][0], rel[0][1], rel[0][2],
                                                  rel[1][0], rel[1][1], rel[1][2], rel[2], aux)))
         outfile.write(line_to_write + '\n')
 
 
+def split_sent_to_triples(dataset, filter_none=True):
+    processed_data = []
+    for data in dataset:
+        rels = data[1]
+        triples = set()
+        for rel in rels:
+            if filter_none and rel[2] == "NONE":
+                continue
+            additional = rel[3]
+            aux = convert_aux(additional)
+            triples.add((rel[2], rel[0][2], str(rel[1][2])))
+            # add name information for copying
+            if "PLAYER" in rel[2]:
+                triples.add(("PLAYER_NAME", rel[0][2], rel[0][2]))
+            elif "TEAM" in rel[2]:
+                triples.add(("TEAM_NAME", rel[0][2], rel[0][2]))
+            # add home away information
+            if aux in ("HOME", "AWAY"):
+                triples.add(("HOME_AWAY", rel[0][2], aux))
+        if len(triples) > 0:
+            processed_data.append({'tokens': data[0], 'triples': list(triples)})
+    return processed_data
+
+
+def make_translate_corpus(dataset):
+    src_lines = []
+    tgt_lines = []
+    for data in dataset:
+        rels = data[1]
+        tokens = data[0]
+        triples = set()
+        tgt_ranges = set()
+        for rel in rels:
+            if rel[2] == "NONE":
+                continue
+            rel_type = rel[2]
+            ent_start = int(rel[0][0])
+            ent_end = int(rel[0][1])
+            ent = unicode(rel[0][2]).replace(' ', '_')
+            val_start = int(rel[1][0])
+            val_end = int(rel[1][1])
+            val = unicode(rel[1][2]).replace(' ', '_')
+            if ent_end - ent_start > 1:
+                tgt_ranges.add((ent_start, ent_end))
+            if val_end - val_start > 1:
+                tgt_ranges.add((val_start, val_end))
+
+            additional = rel[3]
+            aux = convert_aux(additional)
+            triples.add((rel_type, ent, val))
+            # add name information for copying
+            if "PLAYER" in rel_type:
+                triples.add(("PLAYER_NAME", ent, ent))
+            elif "TEAM" in rel_type:
+                triples.add(("TEAM_NAME", ent, ent))
+            # add home away information
+            if aux in ("HOME", "AWAY"):
+                triples.add(("HOME_AWAY", ent, aux))
+
+        if len(triples) == 0:
+            continue
+        # process target tokens to connect multiword with underscore
+        new_tokens = []
+        for idx, word in enumerate(tokens):
+            between = False
+            for start, end in tgt_ranges:
+                if idx == start:
+                    new_tokens.append(u'_'.join(tokens[start:end]))
+                    between = True
+                    break
+                elif start < idx < end:
+                    between = True
+            if not between:
+                new_tokens.append(word)
+            else:
+                continue
+        sorted_triples = list(sorted(triples, key=lambda x: x[0]))
+        src_line = u''
+        for t in sorted_triples:
+            src_line += u'|'.join((t[2], t[0], t[1])) + u' '
+        tgt_line = u' '.join(new_tokens)
+        src_lines.append(src_line)
+        tgt_lines.append(tgt_line)
+
+    return src_lines, tgt_lines
+
+
 # for extracting sentence-data pairs
 def extract_sentence_data(outfile, path="../boxscore-data/rotowire"):
     datasets = get_datasets(path)
+    # output json
+    with codecs.open(outfile + '.train.json', 'w', 'utf-8') as of:
+        json.dump(split_sent_to_triples(datasets[0]), of)
+    with codecs.open(outfile + '.valid.json', 'w', 'utf-8') as of:
+        json.dump(split_sent_to_triples(datasets[1]), of)
+    with codecs.open(outfile + '.test.json', 'w', 'utf-8') as of:
+        json.dump(split_sent_to_triples(datasets[2]), of)
+
+    # output translate data files
+    with codecs.open(outfile + '.train.src', 'w', 'utf-8') as of1, \
+            codecs.open(outfile + '.train.tgt', 'w', 'utf-8') as of2:
+        src_lines, tgt_lines = make_translate_corpus(datasets[0])
+        of1.write(u'\n'.join(src_lines))
+        of2.write(u'\n'.join(tgt_lines))
+    with codecs.open(outfile + '.valid.src', 'w', 'utf-8') as of1, \
+            codecs.open(outfile + '.valid.tgt', 'w', 'utf-8') as of2:
+        src_lines, tgt_lines = make_translate_corpus(datasets[1])
+        of1.write(u'\n'.join(src_lines))
+        of2.write(u'\n'.join(tgt_lines))
+    with codecs.open(outfile + '.test.src', 'w', 'utf-8') as of1, \
+            codecs.open(outfile + '.test.tgt', 'w', 'utf-8') as of2:
+        src_lines, tgt_lines = make_translate_corpus(datasets[2])
+        of1.write(u'\n'.join(src_lines))
+        of2.write(u'\n'.join(tgt_lines))
+
+    # output csv
     with codecs.open(outfile + '.train', 'w', 'utf-8') as of:
         for data in datasets[0]:
             write_data_to_line(data, of)

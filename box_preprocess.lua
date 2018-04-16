@@ -483,7 +483,6 @@ local function main()
   data.dicts.src = initVocabulary('source', jsondat_train, opt.src_vocab,
                                   opt.src_vocab_size, opt.features_vocabs_prefix)
   --for k,v in pairs(data.dicts.src) do print(k) end
-
   data.dicts.tgt = data.dicts.src
 
   print('Preparing training data...')
