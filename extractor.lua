@@ -526,22 +526,13 @@ end
 
 
 function set_up_saved_models()
- --[[
-  local convens_paths = {"convie-ep9-1.t7",
-                         "convie-ep9-2.t7",
-			 "convie-ep8-3.t7"}
+  local convens_paths = {"roto-convie-ep3-96-49",
+                         "roto-convie-ep5-95-64",
+			             "roto-convie-ep9-95-69"}
 
-  local lstmens_paths = {"blstmie-ep7-1.t7",
-	                 "blstmie-ep7-2.t7",
-			 "blstmie-ep10-3.t7"}
-  --]]
-  local convens_paths = {"conv1ie-ep6-94-74.t7",
-                         "conv2ie-ep3-94-60.t7",
-			 "conv3ie-ep8-95-72.t7"}
-
-  local lstmens_paths = {"blstm1ie-ep4-93-75.t7",
-	                 "blstm2ie-ep3-93-71.t7",
-			 "blstm3ie-ep2-94-72.t7"}  
+  local lstmens_paths = {"roto-blstmie-ep2-95-70",
+                         "roto-blstmie-ep9-91-79",
+			             "roto-blstmie-ep3-94-72"}
   opt.embed_size = 200
   opt.num_filters = 200
   opt.conv_fc_layer_size = 500
