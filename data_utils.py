@@ -1244,6 +1244,47 @@ def save_coref_task_data(outfile, inp_file="full_newnba_prepdata2.json"):
             f.write("%s %d \n" % (revlabels[i], i))
 
 
+def mask_output(input_path):
+    with codecs.open(os.path.join("../boxscore-data/rotowire", "train.json"), "r", "utf-8") as f:
+        trdata = json.load(f)
+
+    all_ents, players, teams, cities = get_ents(trdata)
+    all_ents = set([x.replace(' ', '_') for x in all_ents])
+
+    with codecs.open(input_path, "r", "utf-8") as f:
+        sents = f.readlines()
+
+    masked_sents = []
+    for idx, sent in enumerate(sents):
+        sent = sent.split()
+        ents = extract_entities(sent, all_ents, prons)
+        nums = extract_numbers(sent)
+        ranges = []
+        for ent in ents:
+            ranges.append((ent[0], ent[1], 'ENT'))
+        for num in nums:
+            ranges.append((num[0], num[1], 'NUM'))
+        ranges.sort(key=lambda x: x[0])
+
+        masked_sent = []
+        i = 0
+        while i < len(sent):
+            match = False
+            for r in ranges:
+                if i == r[0]:
+                    match = True
+                    masked_sent.append(r[2])
+                    i = r[1]
+                    break
+            if not match:
+                masked_sent.append(sent[i])
+                i += 1
+        masked_sents.append(masked_sent)
+
+    with codecs.open(input_path + '.masked', 'w', 'utf-8') as f:
+        f.write('\n'.join([' '.join(s) for s in masked_sents]))
+
+
 parser = argparse.ArgumentParser(description='Utility Functions')
 parser.add_argument('-input_path', type=str, default="",
                     help="path to input")
@@ -1254,7 +1295,7 @@ parser.add_argument('-gen_fi', type=str, default="",
 parser.add_argument('-dict_pfx', type=str, default="roto-ie",
                     help="prefix of .dict and .labels files")
 parser.add_argument('-mode', type=str, default='ptrs',
-                    choices=['ptrs', 'make_ie_data', 'prep_gen_data', 'extract_sent'],
+                    choices=['ptrs', 'make_ie_data', 'prep_gen_data', 'extract_sent', 'mask'],
                     help="what utility function to run")
 parser.add_argument('-test', action='store_true', help='use test data')
 
@@ -1269,3 +1310,5 @@ elif args.mode == 'prep_gen_data':
                         test=args.test)
 elif args.mode == 'extract_sent':
     extract_sentence_data(args.output_fi, path=args.input_path)
+elif args.mode == 'mask':
+    mask_output(args.input_path)
