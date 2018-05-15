@@ -1285,6 +1285,17 @@ def mask_output(input_path):
         f.write('\n'.join([' '.join(s) for s in masked_sents]))
 
 
+def save_ent(output_path):
+    with codecs.open(os.path.join("../boxscore-data/rotowire", "train.json"), "r", "utf-8") as f:
+        trdata = json.load(f)
+
+    all_ents, players, teams, cities = get_ents(trdata)
+    all_ents = set([x.replace(' ', '_') for x in all_ents])
+
+    with codecs.open(output_path, 'w', 'utf-8') as f:
+        json.dump(list(all_ents), f)
+
+
 parser = argparse.ArgumentParser(description='Utility Functions')
 parser.add_argument('-input_path', type=str, default="",
                     help="path to input")
@@ -1295,7 +1306,7 @@ parser.add_argument('-gen_fi', type=str, default="",
 parser.add_argument('-dict_pfx', type=str, default="roto-ie",
                     help="prefix of .dict and .labels files")
 parser.add_argument('-mode', type=str, default='ptrs',
-                    choices=['ptrs', 'make_ie_data', 'prep_gen_data', 'extract_sent', 'mask'],
+                    choices=['ptrs', 'make_ie_data', 'prep_gen_data', 'extract_sent', 'mask', 'save_ent'],
                     help="what utility function to run")
 parser.add_argument('-test', action='store_true', help='use test data')
 
@@ -1312,3 +1323,5 @@ elif args.mode == 'extract_sent':
     extract_sentence_data(args.output_fi, path=args.input_path)
 elif args.mode == 'mask':
     mask_output(args.input_path)
+elif args.mode == 'save_ent':
+    save_ent(args.output_fi)
