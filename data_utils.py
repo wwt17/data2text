@@ -332,116 +332,6 @@ def append_labelnums(labels):
         labellist.append(labelnums[i])
 
 
-# for full sentence IE training
-def save_full_sent_data_backup(outfile, path="../boxscore-data/rotowire", multilabel_train=False, nonedenom=0):
-    datasets = get_datasets(path)
-    # make vocab and get labels
-    word_counter = Counter()
-    [word_counter.update(tup[0]) for tup in datasets[0]]
-    for k in word_counter.keys():
-        if word_counter[k] < 2:
-            del word_counter[k]  # will replace w/ unk
-    word_counter["UNK"] = 1
-    vocab = dict(((wrd, i + 1) for i, wrd in enumerate(word_counter.keys())))
-    labelset = set()
-    [labelset.update([rel[2] for rel in tup[1]]) for tup in datasets[0]]
-    labeldict = dict(((label, i + 1) for i, label in enumerate(labelset)))
-
-    # save stuff
-    trsents, trlens, trentdists, trnumdists, trlabels = [], [], [], [], []
-    valsents, vallens, valentdists, valnumdists, vallabels = [], [], [], [], []
-    testsents, testlens, testentdists, testnumdists, testlabels = [], [], [], [], []
-
-    max_trlen = max((len(tup[0]) for tup in datasets[0]))
-    print "max tr sentence length:", max_trlen
-
-    # do training data
-    for tup in datasets[0]:
-        if multilabel_train:
-            append_multilabeled_data(tup, trsents, trlens, trentdists, trnumdists, trlabels, vocab, labeldict,
-                                     max_trlen)
-        else:
-            append_to_data(tup, trsents, trlens, trentdists, trnumdists, trlabels, vocab, labeldict, max_trlen)
-
-    if multilabel_train:
-        append_labelnums(trlabels)
-
-    if nonedenom > 0:
-        # don't keep all the NONE labeled things
-        none_idxs = [i for i, labellist in enumerate(trlabels) if labellist[0] == labeldict["NONE"]]
-        random.shuffle(none_idxs)
-        # allow at most 1/(nonedenom+1) of NONE-labeled
-        num_to_keep = int(math.floor(float(len(trlabels) - len(none_idxs)) / nonedenom))
-        print "originally", len(trlabels), "training examples"
-        print "keeping", num_to_keep, "NONE-labeled examples"
-        ignore_idxs = set(none_idxs[num_to_keep:])
-
-        # get rid of most of the NONE-labeled examples
-        trsents = [thing for i, thing in enumerate(trsents) if i not in ignore_idxs]
-        trlens = [thing for i, thing in enumerate(trlens) if i not in ignore_idxs]
-        trentdists = [thing for i, thing in enumerate(trentdists) if i not in ignore_idxs]
-        trnumdists = [thing for i, thing in enumerate(trnumdists) if i not in ignore_idxs]
-        trlabels = [thing for i, thing in enumerate(trlabels) if i not in ignore_idxs]
-
-    print len(trsents), "training examples"
-
-    # do val, which we also consider multilabel
-    max_vallen = max((len(tup[0]) for tup in datasets[1]))
-    for tup in datasets[1]:
-        # append_to_data(tup, valsents, vallens, valentdists, valnumdists, vallabels, vocab, labeldict, max_len)
-        append_multilabeled_data(tup, valsents, vallens, valentdists, valnumdists, vallabels, vocab, labeldict,
-                                 max_vallen)
-
-    append_labelnums(vallabels)
-
-    print len(valsents), "validation examples"
-
-    # do test, which we also consider multilabel
-    max_testlen = max((len(tup[0]) for tup in datasets[2]))
-    for tup in datasets[2]:
-        # append_to_data(tup, valsents, vallens, valentdists, valnumdists, vallabels, vocab, labeldict, max_len)
-        append_multilabeled_data(tup, testsents, testlens, testentdists, testnumdists, testlabels, vocab, labeldict,
-                                 max_testlen)
-
-    append_labelnums(testlabels)
-
-    print len(testsents), "test examples"
-
-    h5fi = h5py.File(outfile, "w")
-    h5fi["trsents"] = np.array(trsents, dtype=int)
-    h5fi["trlens"] = np.array(trlens, dtype=int)
-    h5fi["trentdists"] = np.array(trentdists, dtype=int)
-    h5fi["trnumdists"] = np.array(trnumdists, dtype=int)
-    h5fi["trlabels"] = np.array(trlabels, dtype=int)
-    h5fi["valsents"] = np.array(valsents, dtype=int)
-    h5fi["vallens"] = np.array(vallens, dtype=int)
-    h5fi["valentdists"] = np.array(valentdists, dtype=int)
-    h5fi["valnumdists"] = np.array(valnumdists, dtype=int)
-    h5fi["vallabels"] = np.array(vallabels, dtype=int)
-    # h5fi.close()
-
-    # h5fi = h5py.File("test-" + outfile, "w")
-    h5fi["testsents"] = np.array(testsents, dtype=int)
-    h5fi["testlens"] = np.array(testlens, dtype=int)
-    h5fi["testentdists"] = np.array(testentdists, dtype=int)
-    h5fi["testnumdists"] = np.array(testnumdists, dtype=int)
-    h5fi["testlabels"] = np.array(testlabels, dtype=int)
-    h5fi.close()
-    # h5fi["vallabelnums"] = np.array(vallabelnums, dtype=int)
-    # h5fi.close()
-
-    # write dicts
-    revvocab = dict(((v, k) for k, v in vocab.iteritems()))
-    revlabels = dict(((v, k) for k, v in labeldict.iteritems()))
-    with codecs.open(outfile.split('.')[0] + ".dict", "w+", "utf-8") as f:
-        for i in xrange(1, len(revvocab) + 1):
-            f.write("%s %d \n" % (revvocab[i], i))
-
-    with codecs.open(outfile.split('.')[0] + ".labels", "w+", "utf-8") as f:
-        for i in xrange(1, len(revlabels) + 1):
-            f.write("%s %d \n" % (revlabels[i], i))
-
-
 def preprocess_datasets(datasets):
     new_datasets = []
     for dataset in datasets:
@@ -514,9 +404,10 @@ def preprocess_datasets(datasets):
 
 
 # modified full sentence IE training
-def save_full_sent_data(outfile, path="../boxscore-data/rotowire", multilabel_train=False, nonedenom=0):
+def save_full_sent_data(outfile, path="../boxscore-data/rotowire", multilabel_train=False, nonedenom=0, backup=False, verbose=True):
     datasets = get_datasets(path)
-    datasets = preprocess_datasets(datasets)
+    if not backup:
+        datasets = preprocess_datasets(datasets)
     # make vocab and get labels
     word_counter = Counter()
     [word_counter.update(tup[0]) for tup in datasets[0]]
@@ -567,11 +458,12 @@ def save_full_sent_data(outfile, path="../boxscore-data/rotowire", multilabel_tr
 
     print len(trsents), "training examples"
 
-    print(trsents[0])
-    print(trlens[0])
-    print(trentdists[0])
-    print(trnumdists[0])
-    print(trlabels[0])
+    if verbose:
+        print(trsents[0])
+        print(trlens[0])
+        print(trentdists[0])
+        print(trnumdists[0])
+        print(trlabels[0])
 
     # do val, which we also consider multilabel
     max_vallen = max((len(tup[0]) for tup in datasets[1]))
@@ -786,7 +678,7 @@ def extract_sentence_data(outfile, path="../boxscore-data/rotowire"):
             write_data_to_line(data, of)
 
 
-def prep_generated_data_backup(genfile, dict_pfx, outfile, path="../boxscore-data/rotowire", test=False):
+def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False, backup=False):
     # recreate vocab and labeldict
     vocab = {}
     with codecs.open(dict_pfx + ".dict", "r", "utf-8") as f:
@@ -808,96 +700,49 @@ def prep_generated_data_backup(genfile, dict_pfx, outfile, path="../boxscore-dat
 
     all_ents, players, teams, cities = get_ents(trdata)
 
-    valfi = "test.json" if test else "valid.json"
+    valfi = ("roto-sent-data.test.src" if test else "roto-sent-data.valid.src") if not backup else ("test.json" if test else "valid.json")
     with codecs.open(os.path.join(path, valfi), "r", "utf-8") as f:
-        valdata = json.load(f)
+        if not backup:
+            vallines = f.readlines()
+        else:
+            valdata = json.load(f)
+    if not backup:
+        valdata = [[x.split('|') for x in line.split()] for line in vallines]
 
     assert len(valdata) == len(gens)
 
-    nugz = []  # to hold (sentence_tokens, [rels]) tuples
-    sent_reset_indices = {0}  # sentence indices where a box/story is reset
-    for i, entry in enumerate(valdata):
-        summ = gens[i]
-        append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, nugz)
-        sent_reset_indices.add(len(nugz))
-
-    # save stuff
-    max_len = max((len(tup[0]) for tup in nugz))
-    psents, plens, pentdists, pnumdists, plabels = [], [], [], [], []
-
-    rel_reset_indices = []
-    for t, tup in enumerate(nugz):
-        if t in sent_reset_indices:  # then last rel is the last of its box
-            assert len(psents) == len(plabels)
-            rel_reset_indices.append(len(psents))
-        append_multilabeled_data(tup, psents, plens, pentdists, pnumdists, plabels, vocab, labeldict, max_len)
-
-    append_labelnums(plabels)
-
-    print len(psents), "prediction examples"
-
-    h5fi = h5py.File(outfile, "w")
-    h5fi["valsents"] = np.array(psents, dtype=int)
-    h5fi["vallens"] = np.array(plens, dtype=int)
-    h5fi["valentdists"] = np.array(pentdists, dtype=int)
-    h5fi["valnumdists"] = np.array(pnumdists, dtype=int)
-    h5fi["vallabels"] = np.array(plabels, dtype=int)
-    h5fi["boxrestartidxs"] = np.array(np.array(rel_reset_indices) + 1, dtype=int)  # 1-indexed
-    h5fi.close()
-
-
-def prep_generated_data(genfile, dict_pfx, outfile, path="../OpenNMT-py/data/rotowire/", test=False):
-    # recreate vocab and labeldict
-    vocab = {}
-    with codecs.open(dict_pfx + ".dict", "r", "utf-8") as f:
-        for line in f:
-            pieces = line.strip().split()
-            vocab[pieces[0]] = int(pieces[1])
-
-    labeldict = {}
-    with codecs.open(dict_pfx + ".labels", "r", "utf-8") as f:
-        for line in f:
-            pieces = line.strip().split()
-            labeldict[pieces[0]] = int(pieces[1])
-
-    with codecs.open(genfile, "r", "utf-8") as f:
-        gens = f.readlines()
-
-    with codecs.open(os.path.join("../boxscore-data/rotowire", "train.json"), "r", "utf-8") as f:
-        trdata = json.load(f)
-
-    all_ents, players, teams, cities = get_ents(trdata)
-
-    valfi = "roto-sent-data.test.src" if test else "roto-sent-data.valid.src"
-    with codecs.open(os.path.join(path, valfi), "r", "utf-8") as f:
-        vallines = f.readlines()
-    valdata = [[x.split('|') for x in line.split()] for line in vallines]
-    assert len(valdata) == len(gens)
-
-    all_ents = set([x.replace(' ', '_') for x in all_ents])
+    if not backup:
+        all_ents = set([x.replace(' ', '_') for x in all_ents])
 
     # extract ent-num pairs from generated sentence
     nugz = []  # to hold (sentence_tokens, [rels]) tuples
-    for idx, summ in enumerate(gens):
-        gold_rels = []
-        for rel in valdata[idx]:
-            if rel[1] not in ("TEAM_NAME", "PLAYER_NAME"):
-                gold_rels.append((rel[2], int(rel[0]), rel[1]))
+    if not backup:
+        for idx, summ in enumerate(gens):
+            gold_rels = []
+            for rel in valdata[idx]:
+                if rel[1] not in ("TEAM_NAME", "PLAYER_NAME"):
+                    gold_rels.append((rel[2], int(rel[0]), rel[1]))
 
-        sent = summ.split()
-        ents = extract_entities(sent, all_ents, prons)
-        nums = extract_numbers(sent)
-        extracted_rels = []
-        for ent in ents:
-            for num in nums:
-                match = False
-                for rel in gold_rels:
-                    if ent[2] == rel[0] and num[2] == rel[1]:
-                        match = True
-                        extracted_rels.append((ent, num, rel[2], None))
-                if not match:
-                    extracted_rels.append((ent, num, 'NONE', None))
-        nugz.append((sent, extracted_rels))
+            sent = summ.split()
+            ents = extract_entities(sent, all_ents, prons)
+            nums = extract_numbers(sent)
+            extracted_rels = []
+            for ent in ents:
+                for num in nums:
+                    match = False
+                    for rel in gold_rels:
+                        if ent[2] == rel[0] and num[2] == rel[1]:
+                            match = True
+                            extracted_rels.append((ent, num, rel[2], None))
+                    if not match:
+                        extracted_rels.append((ent, num, 'NONE', None))
+            nugz.append((sent, extracted_rels))
+    else:
+        sent_reset_indices = {0}  # sentence indices where a box/story is reset
+        for i, entry in enumerate(valdata):
+            summ = gens[i]
+            append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, nugz)
+            sent_reset_indices.add(len(nugz))
 
     # save stuff
     max_len = max((len(tup[0]) for tup in nugz))
@@ -905,8 +750,9 @@ def prep_generated_data(genfile, dict_pfx, outfile, path="../OpenNMT-py/data/rot
 
     rel_reset_indices = []
     for t, tup in enumerate(nugz):
-        assert len(psents) == len(plabels)
-        rel_reset_indices.append(len(psents))
+        if not backup or t in sent_reset_indices:  # then last rel is the last of its box
+            assert len(psents) == len(plabels)
+            rel_reset_indices.append(len(psents))
         append_multilabeled_data(tup, psents, plens, pentdists, pnumdists, plabels, vocab, labeldict, max_len)
 
     append_labelnums(plabels)
