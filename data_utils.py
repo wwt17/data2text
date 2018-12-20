@@ -11,6 +11,9 @@ import math
 from text2num import text2num, NumberException
 import argparse
 
+def open(*args, **kwargs):
+    return codecs.open(encoding="utf-8", *args, **kwargs)
+
 random.seed(2)
 
 Ent = namedtuple("Ent", ["start", "end", "s", "is_pron"])
@@ -258,7 +261,7 @@ stages = ["train", "valid", "test"]
 def get_datasets(path="rotowire"):
     datasets = {}
     for stage in stages:
-        with codecs.open(os.path.join(path, "{}.json".format(stage)), "r", "utf-8") as f:
+        with open(os.path.join(path, "{}.json".format(stage)), "r") as f:
             datasets[stage] = json.load(f)
 
     all_ents, players, teams, cities = get_ents(datasets["train"])
@@ -445,7 +448,7 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
     # write dicts
     for d, name in ((vocab, 'dict'), (labeldict, 'labels')):
         revd = {v: k for k, v in d.iteritems()}
-        with codecs.open("{}.{}".format(outfile.split('.')[0], name), "w+", "utf-8") as f:
+        with open("{}.{}".format(outfile.split('.')[0], name), "w+") as f:
             for i in xrange(1, len(revd) + 1):
                 f.write("%s %d \n" % (revd[i], i))
 
@@ -571,46 +574,44 @@ def extract_sentence_data(outfile, path="rotowire"):
     datasets = get_datasets(path)
     for stage, dataset in datasets.items():
         # output json
-        with codecs.open(outfile + '.{}.json'.format(stage), 'w', 'utf-8') as of:
+        with open(outfile + '.{}.json'.format(stage), 'w') as of:
             json.dump(split_sent_to_triples(dataset), of)
 
         # output translate data files
-        with codecs.open(outfile + '.{}.src'.format(stage), 'w', 'utf-8') as of1, \
-                codecs.open(outfile + '.{}.tgt'.format(stage), 'w', 'utf-8') as of2:
+        with open(outfile + '.{}.src'.format(stage), 'w') as of1, \
+                open(outfile + '.{}.tgt'.format(stage), 'w') as of2:
             src_lines, tgt_lines = make_translate_corpus(dataset)
             of1.write(u'\n'.join(src_lines))
             of2.write(u'\n'.join(tgt_lines))
 
         # output csv
-        with codecs.open(outfile + '.{}'.format(stage), 'w', 'utf-8') as of:
+        with open(outfile + '.{}'.format(stage), 'w') as of:
             for data in dataset:
                 write_data_to_line(data, of)
 
 
 def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False, backup=False):
     # recreate vocab and labeldict
-    vocab = {}
-    with codecs.open(dict_pfx + ".dict", "r", "utf-8") as f:
-        for line in f:
-            pieces = line.strip().split()
-            vocab[pieces[0]] = int(pieces[1])
+    def read_dict(s):
+        d = {}
+        with open("{}.{}".format(dict_pfx, s), "r") as f:
+            for line in f:
+                pieces = line.strip().split()
+                d[pieces[0]] = int(pieces[1])
+        return d
 
-    labeldict = {}
-    with codecs.open(dict_pfx + ".labels", "r", "utf-8") as f:
-        for line in f:
-            pieces = line.strip().split()
-            labeldict[pieces[0]] = int(pieces[1])
+    vocab, labeldict = map(read_dict, ["dict", "labels"])
 
-    with codecs.open(genfile, "r", "utf-8") as f:
+    with open(genfile, "r") as f:
         gens = f.readlines()
 
-    with codecs.open(os.path.join(path, "train.json"), "r", "utf-8") as f:
+    with open(os.path.join(path, "train.json"), "r") as f:
         trdata = json.load(f)
 
     all_ents, players, teams, cities = get_ents(trdata)
 
     valfi = ("roto-sent-data.test.src" if test else "roto-sent-data.valid.src") if not backup else ("test.json" if test else "valid.json")
-    with codecs.open(os.path.join(path, valfi), "r", "utf-8") as f:
+    with open(os.path.join(path, valfi), "r") as f:
         if not backup:
             vallines = f.readlines()
         else:
@@ -621,7 +622,7 @@ def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False,
     assert len(valdata) == len(gens)
 
     if not backup:
-        all_ents = set([x.replace(' ', '_') for x in all_ents])
+        all_ents = set(x.replace(' ', '_') for x in all_ents)
 
     # extract ent-num pairs from generated sentence
     nugz = []  # to hold (sentence_tokens, [rels]) tuples
@@ -654,7 +655,7 @@ def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False,
             sent_reset_indices.add(len(nugz))
 
     # save stuff
-    max_len = max((len(tup[0]) for tup in nugz))
+    max_len = max(len(tup[0]) for tup in nugz)
     p = []
 
     rel_reset_indices = []
@@ -776,7 +777,7 @@ def make_pointerfi(outfi, inp_file="rotowire/train.json", resolve_prons=False):
     this means that if we sneak in pronoun strings as their referents, we won't point to the
     pronoun if the referent appears in the table; we may use this tho to point to the correct number
     """
-    with codecs.open(inp_file, "r", "utf-8") as f:
+    with open(inp_file, "r") as f:
         trdata = json.load(f)
 
     rulsrcs = linearized_preproc(box_preproc2(trdata))
@@ -920,7 +921,7 @@ def make_pointerfi(outfi, inp_file="rotowire/train.json", resolve_prons=False):
 # for coref prediction stuff
 # we'll use string equality for now
 def save_coref_task_data(outfile, inp_file="full_newnba_prepdata2.json"):
-    with codecs.open(inp_file, "r", "utf-8") as f:
+    with open(inp_file, "r") as f:
         data = json.load(f)
 
     all_ents, players, teams, cities = get_ents(data["train"])
@@ -987,23 +988,23 @@ def save_coref_task_data(outfile, inp_file="full_newnba_prepdata2.json"):
     # write dicts
     revvocab = dict(((v, k) for k, v in vocab.iteritems()))
     revlabels = dict(((v, k) for k, v in labeldict.iteritems()))
-    with codecs.open(outfile.split('.')[0] + ".dict", "w+", "utf-8") as f:
+    with open(outfile.split('.')[0] + ".dict", "w+") as f:
         for i in xrange(1, len(revvocab) + 1):
             f.write("%s %d \n" % (revvocab[i], i))
 
-    with codecs.open(outfile.split('.')[0] + ".labels", "w+", "utf-8") as f:
+    with open(outfile.split('.')[0] + ".labels", "w+") as f:
         for i in xrange(1, len(revlabels) + 1):
             f.write("%s %d \n" % (revlabels[i], i))
 
 
 def mask_output(input_path, path="rotowire"):
-    with codecs.open(os.path.join(path, "train.json"), "r", "utf-8") as f:
+    with open(os.path.join(path, "train.json"), "r") as f:
         trdata = json.load(f)
 
     all_ents, players, teams, cities = get_ents(trdata)
     all_ents = set([x.replace(' ', '_') for x in all_ents])
 
-    with codecs.open(input_path, "r", "utf-8") as f:
+    with open(input_path, "r") as f:
         sents = f.readlines()
 
     masked_sents = []
@@ -1033,18 +1034,18 @@ def mask_output(input_path, path="rotowire"):
                 i += 1
         masked_sents.append(masked_sent)
 
-    with codecs.open(input_path + '.masked', 'w', 'utf-8') as f:
+    with open(input_path + '.masked', 'w') as f:
         f.write('\n'.join([' '.join(s) for s in masked_sents]))
 
 
 def save_ent(output_path, path="rotowire"):
-    with codecs.open(os.path.join(path, "train.json"), "r", "utf-8") as f:
+    with open(os.path.join(path, "train.json"), "r") as f:
         trdata = json.load(f)
 
     all_ents, players, teams, cities = get_ents(trdata)
     all_ents = set([x.replace(' ', '_') for x in all_ents])
 
-    with codecs.open(output_path, 'w', 'utf-8') as f:
+    with open(output_path, 'w') as f:
         json.dump(list(all_ents), f)
 
 
