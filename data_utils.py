@@ -1,3 +1,4 @@
+from __future__ import print_function
 import sys, codecs, json, os
 from collections import Counter, defaultdict
 from nltk import sent_tokenize, word_tokenize
@@ -24,23 +25,21 @@ def get_ents(dat):
     players = set()
     teams = set()
     cities = set()
+    team_strs = ["vis", "home"]
     for thing in dat:
-        teams.add(thing["vis_name"])
-        teams.add(thing["vis_line"]["TEAM-NAME"])
-        teams.add(thing["vis_city"] + " " + thing["vis_name"])
-        teams.add(thing["vis_city"] + " " + thing["vis_line"]["TEAM-NAME"])
-        teams.add(thing["home_name"])
-        teams.add(thing["home_line"]["TEAM-NAME"])
-        teams.add(thing["home_city"] + " " + thing["home_name"])
-        teams.add(thing["home_city"] + " " + thing["home_line"]["TEAM-NAME"])
+        for team_str in team_strs:
+            names = thing["{}_name".format(team_str)], thing["{}_line".format(team_str)]["TEAM-NAME"]
+            prefixes = ["", thing["{}_city".format(team_str)] + " "]
+            for prefix in prefixes:
+                for name in names:
+                    teams.add(prefix + name)
         # special case for this
-        if thing["vis_city"] == "Los Angeles":
-            teams.add("LA" + thing["vis_name"])
-        if thing["home_city"] == "Los Angeles":
-            teams.add("LA" + thing["home_name"])
+        for team_str in team_strs:
+            if thing["{}_city".format(team_str)] == "Los Angeles":
+                teams.add("LA" + thing["{}_name".format(team_str)])
         # sometimes team_city is different
-        cities.add(thing["home_city"])
-        cities.add(thing["vis_city"])
+        for team_str in team_strs:
+            cities.add(thing["{}_city".format(team_str)])
         players.update(thing["box_score"]["PLAYER_NAME"].values())
         cities.update(thing["box_score"]["TEAM_CITY"].values())
 
@@ -93,7 +92,7 @@ def extract_entities(sent, all_ents, prons, prev_ents=None, resolve_prons=False,
                 if referent is None:
                     sent_ents.append((i, i + 1, sent[i], True))  # is a pronoun
                 else:
-                    # print "replacing", sent[i], "with", referent[2], "in", " ".join(sent)
+                    # print("replacing", sent[i], "with", referent[2], "in", " ".join(sent))
                     sent_ents.append(
                         (i, i + 1, referent[2], False))  # pretend it's not a pron and put in matching string
             else:
@@ -119,7 +118,7 @@ def annoying_number_word(sent, i):
 def extract_numbers(sent):
     sent_nums = []
     i = 0
-    # print sent
+    # print(sent)
     while i < len(sent):
         toke = sent[i]
         a_number = False
@@ -157,7 +156,7 @@ def get_player_idx(bs, entname):
         if len(keys) > 1:  # take the earliest one
             keys.sort(key=lambda x: int(x))
             keys = keys[:1]
-            # print "picking", bs["PLAYER_NAME"][keys[0]]
+            # print("picking", bs["PLAYER_NAME"][keys[0]])
     if len(keys) == 0:
         for k, v in bs["FIRST_NAME"].iteritems():
             if entname == v:
@@ -165,7 +164,7 @@ def get_player_idx(bs, entname):
         if len(keys) > 1:  # if we matched on first name and there are a bunch just forget about it
             return None
     # if len(keys) == 0:
-    # print "Couldn't find", entname, "in", bs["PLAYER_NAME"].values()
+    # print("Couldn't find", entname, "in", bs["PLAYER_NAME"].values())
     assert len(keys) <= 1, entname + " : " + str(bs["PLAYER_NAME"].values())
     return keys[0] if len(keys) > 0 else None
 
@@ -248,31 +247,25 @@ def append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, 
     return candrels
 
 
+stages = ["train", "valid", "test"]
+
+
 def get_datasets(path="rotowire"):
-    with codecs.open(os.path.join(path, "train.json"), "r", "utf-8") as f:
-        trdata = json.load(f)
+    datasets = {}
+    for stage in stages:
+        with codecs.open(os.path.join(path, "{}.json".format(stage)), "r", "utf-8") as f:
+            datasets[stage] = json.load(f)
 
-    all_ents, players, teams, cities = get_ents(trdata)
-
-    with codecs.open(os.path.join(path, "valid.json"), "r", "utf-8") as f:
-        valdata = json.load(f)
-
-    with codecs.open(os.path.join(path, "test.json"), "r", "utf-8") as f:
-        testdata = json.load(f)
+    all_ents, players, teams, cities = get_ents(datasets["train"])
 
     extracted_stuff = []
-    datasets = [trdata, valdata, testdata]
-    for dataset in datasets:
+    for stage in stages:
         nugz = []
-        for i, entry in enumerate(dataset):
+        for i, entry in enumerate(datasets[stage]):
             summ = " ".join(entry['summary'])
             append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, nugz)
         extracted_stuff.append(nugz)
 
-    del all_ents
-    del players
-    del teams
-    del cities
     return extracted_stuff
 
 
@@ -324,7 +317,7 @@ def append_multilabeled_data(tup, sents, lens, entdists, numdists, labels, vocab
 def append_labelnums(labels):
     labelnums = [len(labellist) for labellist in labels]
     max_num_labels = max(labelnums)
-    print "max num labels", max_num_labels
+    print("max num labels", max_num_labels)
 
     # append number of labels to labels
     for i, labellist in enumerate(labels):
@@ -426,7 +419,7 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
     testsents, testlens, testentdists, testnumdists, testlabels = [], [], [], [], []
 
     max_trlen = max((len(tup[0]) for tup in datasets[0]))
-    print "max tr sentence length:", max_trlen
+    print("max tr sentence length:", max_trlen)
 
     # do training data
     for tup in datasets[0]:
@@ -445,8 +438,8 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
         random.shuffle(none_idxs)
         # allow at most 1/(nonedenom+1) of NONE-labeled
         num_to_keep = int(math.floor(float(len(trlabels) - len(none_idxs)) / nonedenom))
-        print "originally", len(trlabels), "training examples"
-        print "keeping", num_to_keep, "NONE-labeled examples"
+        print("originally", len(trlabels), "training examples")
+        print("keeping", num_to_keep, "NONE-labeled examples")
         ignore_idxs = set(none_idxs[num_to_keep:])
 
         # get rid of most of the NONE-labeled examples
@@ -456,7 +449,7 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
         trnumdists = [thing for i, thing in enumerate(trnumdists) if i not in ignore_idxs]
         trlabels = [thing for i, thing in enumerate(trlabels) if i not in ignore_idxs]
 
-    print len(trsents), "training examples"
+    print(len(trsents), "training examples")
 
     if verbose:
         print(trsents[0])
@@ -474,7 +467,7 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
 
     append_labelnums(vallabels)
 
-    print len(valsents), "validation examples"
+    print(len(valsents), "validation examples")
 
     # do test, which we also consider multilabel
     max_testlen = max((len(tup[0]) for tup in datasets[2]))
@@ -485,7 +478,7 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
 
     append_labelnums(testlabels)
 
-    print len(testsents), "test examples"
+    print(len(testsents), "test examples")
 
     h5fi = h5py.File(outfile, "w")
     h5fi["trsents"] = np.array(trsents, dtype=int)
@@ -757,7 +750,7 @@ def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False,
 
     append_labelnums(plabels)
 
-    print len(psents), "prediction examples"
+    print(len(psents), "prediction examples")
 
     h5fi = h5py.File(outfile, "w")
     h5fi["valsents"] = np.array(psents, dtype=int)
@@ -919,7 +912,7 @@ def make_pointerfi(outfi, inp_file="rotowire/train.json", resolve_prons=False):
                                 targ_idx = words_so_far + ent_start + k
                                 if targ_idx >= len(entry["summary"]) or entry["summary"][targ_idx] != word:
                                     targ_idx = fix_target_idx(entry["summary"], targ_idx, word)
-                                # print word, rulsrcs[i][src_idx], entry["summary"][words_so_far + ent_start + k]
+                                # print(word, rulsrcs[i][src_idx], entry["summary"][words_so_far + ent_start + k])
                                 if targ_idx is None:
                                     skipped += 1
                                 else:
@@ -943,7 +936,7 @@ def make_pointerfi(outfi, inp_file="rotowire/train.json", resolve_prons=False):
                                 targ_idx = words_so_far + num_start + k
                                 if targ_idx >= len(entry["summary"]) or entry["summary"][targ_idx] != word:
                                     targ_idx = fix_target_idx(entry["summary"], targ_idx, word)
-                                # print word, rulsrcs[i][src_idx], entry["summary"][words_so_far + num_start + k]
+                                # print(word, rulsrcs[i][src_idx], entry["summary"][words_so_far + num_start + k])
                                 if targ_idx is None:
                                     skipped += 1
                                 else:
@@ -983,7 +976,7 @@ def make_pointerfi(outfi, inp_file="rotowire/train.json", resolve_prons=False):
                                     targ_idx = words_so_far + num_start + k
                                     if targ_idx >= len(entry["summary"]) or entry["summary"][targ_idx] != word:
                                         targ_idx = fix_target_idx(entry["summary"], targ_idx, word)
-                                    # print word, rulsrcs[i][src_idx], entry["summary"][words_so_far + num_start + k]
+                                    # print(word, rulsrcs[i][src_idx], entry["summary"][words_so_far + num_start + k])
                                     if targ_idx is None:
                                         skipped += 1
                                     else:
@@ -992,7 +985,7 @@ def make_pointerfi(outfi, inp_file="rotowire/train.json", resolve_prons=False):
 
             words_so_far += len(tokes)
         train_links.append(links)
-    print "SKIPPED", skipped
+    print("SKIPPED", skipped)
 
     # collapse multiple links
     trlink_dicts = []
@@ -1053,7 +1046,7 @@ def save_coref_task_data(outfile, inp_file="full_newnba_prepdata2.json"):
 
     max_trlen = max((len(tup[0]) for tup in datasets[0]))
     max_vallen = max((len(tup[0]) for tup in datasets[1]))
-    print "max sentence lengths:", max_trlen, max_vallen
+    print("max sentence lengths:", max_trlen, max_vallen)
 
     # map words to indices
     trwindows = [[vocab[wrd] if wrd in vocab else vocab["UNK"] for wrd in window]
@@ -1063,10 +1056,10 @@ def save_coref_task_data(outfile, inp_file="full_newnba_prepdata2.json"):
                   + [-1] * (max_vallen - len(window)) for (window, label) in datasets[1]]
     vallabels = [label for (window, label) in datasets[1]]
 
-    print len(trwindows), "training examples"
-    print len(valwindows), "validation examples"
-    print Counter(trlabels)
-    print Counter(vallabels)
+    print(len(trwindows), "training examples")
+    print(len(valwindows), "validation examples")
+    print(Counter(trlabels))
+    print(Counter(vallabels))
 
     h5fi = h5py.File(outfile, "w")
     h5fi["trwindows"] = np.array(trwindows, dtype=int)
