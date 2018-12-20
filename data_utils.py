@@ -1,6 +1,7 @@
 from __future__ import print_function
 import sys, codecs, json, os
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
+import copy
 from nltk import sent_tokenize, word_tokenize
 import numpy as np
 import h5py
@@ -11,6 +12,10 @@ from text2num import text2num, NumberException
 import argparse
 
 random.seed(2)
+
+Ent = namedtuple("Ent", ["start", "end", "s", "is_pron"])
+Num = namedtuple("Num", ["start", "end", "s"])
+Rel = namedtuple("Rel", ["ent", "num", "type", "aux"])
 
 prons = {"he", "He", "him", "Him", "his", "His", "they", "They", "them", "Them", "their", "Their"}  # leave out "it"
 singular_prons = {"he", "He", "him", "Him", "his", "His"}
@@ -90,19 +95,19 @@ def extract_entities(sent, all_ents, prons, prev_ents=None, resolve_prons=False,
             if resolve_prons:
                 referent = deterministic_resolve(sent[i], players, teams, cities, sent_ents, prev_ents)
                 if referent is None:
-                    sent_ents.append((i, i + 1, sent[i], True))  # is a pronoun
+                    sent_ents.append(Ent(i, i + 1, sent[i], True))  # is a pronoun
                 else:
                     # print("replacing", sent[i], "with", referent[2], "in", " ".join(sent))
                     sent_ents.append(
-                        (i, i + 1, referent[2], False))  # pretend it's not a pron and put in matching string
+                        Ent(i, i + 1, referent[2], False))  # pretend it's not a pron and put in matching string
             else:
-                sent_ents.append((i, i + 1, sent[i], True))  # is a pronoun
+                sent_ents.append(Ent(i, i + 1, sent[i], True))  # is a pronoun
             i += 1
         elif sent[i] in all_ents:  # findest longest spans; only works if we put in words...
             j = 1
             while i + j <= len(sent) and " ".join(sent[i:i + j]) in all_ents:
                 j += 1
-            sent_ents.append((i, i + j - 1, " ".join(sent[i:i + j - 1]), False))
+            sent_ents.append(Ent(i, i + j - 1, " ".join(sent[i:i + j - 1]), False))
             i += j - 1
         else:
             i += 1
@@ -128,16 +133,16 @@ def extract_numbers(sent):
         except ValueError:
             pass
         if a_number:
-            sent_nums.append((i, i + 1, int(toke)))
+            sent_nums.append(Num(i, i + 1, int(toke)))
             i += 1
         elif toke in number_words and annoying_number_word(sent, i):  # get longest span  (this is kind of stupid)
             j = 1
             while i + j <= len(sent) and sent[i + j] in number_words and annoying_number_word(sent, i + j):
                 j += 1
             try:
-                sent_nums.append((i, i + j, text2num(" ".join(sent[i:i + j]))))
+                sent_nums.append(Num(i, i + j, text2num(" ".join(sent[i:i + j]))))
             except NumberException:
-                sent_nums.append((i, i + 1, text2num(sent[i])))
+                sent_nums.append(Num(i, i + 1, text2num(sent[i])))
             i += j
         else:
             i += 1
@@ -182,22 +187,22 @@ def get_rels(entry, ents, nums, players, teams, cities):
     rels = []
     bs = entry["box_score"]
     for i, ent in enumerate(ents):
-        if ent[3]:  # pronoun
+        if ent.is_pron:  # pronoun
             continue  # for now
-        entname = ent[2]
+        entname = ent.s
         # assume if a player has a city or team name as his name, they won't use that one (e.g., Orlando Johnson)
         if entname in players and entname not in cities and entname not in teams:
             pidx = get_player_idx(bs, entname)
             for j, numtup in enumerate(nums):
                 found = False
-                strnum = str(numtup[2])
+                strnum = str(numtup.s)
                 if pidx is not None:  # player might not actually be in the game or whatever
                     for colname, col in bs.iteritems():
                         if col[pidx] == strnum:  # allow multiple for now
-                            rels.append((ent, numtup, "PLAYER-" + colname, pidx))
+                            rels.append(Rel(ent, numtup, "PLAYER-" + colname, pidx))
                             found = True
                 if not found:
-                    rels.append((ent, numtup, "NONE", None))
+                    rels.append(Rel(ent, numtup, "NONE", None))
 
         else:  # has to be city or team
             entpieces = entname.split()
@@ -218,16 +223,16 @@ def get_rels(entry, ents, nums, players, teams, cities):
                     is_home = False
             for j, numtup in enumerate(nums):
                 found = False
-                strnum = str(numtup[2])
+                strnum = str(numtup.s)
                 if linescore is not None:
                     for colname, val in linescore.iteritems():
                         if val == strnum:
-                            # rels.append((ent, numtup, "TEAM-" + colname, is_home))
+                            # rels.append(Rel(ent, numtup, "TEAM-" + colname, is_home))
                             # apparently I appended TEAM- at some pt...
-                            rels.append((ent, numtup, colname, is_home))
+                            rels.append(Rel(ent, numtup, colname, is_home))
                             found = True
                 if not found:
-                    rels.append((ent, numtup, "NONE", None))  # should i specialize the NONE labels too?
+                    rels.append(Rel(ent, numtup, "NONE", None))  # should i specialize the NONE labels too?
     return rels
 
 
@@ -324,72 +329,54 @@ def append_labelnums(labels):
         labellist.append(labelnums[i])
 
 
-def preprocess_dataset(dataset):
-    new_dataset = []
-    for data in dataset:
-        rels = data[1]
-        tokens = data[0]
-        tgt_ranges = set()
-        new_rels = []
-        for rel in rels:
-            rel_type = rel[2]
-            aux = rel[3]
+def preprocess_data(data):
+    tokens, rels = data
+    tgt_ranges = set()
+    new_rels = []
+    for rel in rels:
+        new_rels.append(Rel(
+            Ent(rel.ent.start, rel.ent.end,
+                unicode(rel.ent.s).replace(' ', '_'), rel.ent.is_pron),
+            rel.num, rel.type, rel.aux))
+        for e in [rel.ent, rel.num]:
+            tgt_ranges.add((e.start, e.end))
 
-            ent_start = int(rel[0][0])
-            ent_end = int(rel[0][1])
-            ent = unicode(rel[0][2]).replace(' ', '_')
-            val_start = int(rel[1][0])
-            val_end = int(rel[1][1])
-            val = unicode(rel[1][2]).replace(' ', '_')
-            try:
-                val = int(val)
-            except ValueError:
-                val = val
-            new_rels.append([[ent_start, ent_end, ent, rel[0][3]],
-                             [val_start, val_end, val],
-                             rel_type,
-                             aux])
-            if ent_end - ent_start > 1:
-                tgt_ranges.add((ent_start, ent_end))
-            if val_end - val_start > 1:
-                tgt_ranges.add((val_start, val_end))
-
-        # process start and end idxs
-        for rel in new_rels:
-            ent_offset = 0
-            val_offset = 0
+    # process start and end idxs
+    for rel_i, rel in enumerate(new_rels):
+        new_rel = []
+        for i in range(2):
+            offset = 0
             for start, end in tgt_ranges:
-                if rel[0][0] >= end:
-                    ent_offset += end - start - 1
-                if rel[1][0] >= end:
-                    val_offset += end - start - 1
-            rel[0][0] -= ent_offset
-            rel[0][1] = rel[0][0] + 1
-            rel[1][0] -= val_offset
-            rel[1][1] = rel[1][0] + 1
+                if rel[i].start >= end:
+                    offset += end - start - 1
+            start = rel[i].start - offset
+            end = start + 1
+            new_e = type(rel[i])(*((start, end) + rel[i][2:]))
+            new_rel.append(new_e)
+        new_rel = Rel(*(tuple(new_rel) + rel[2:]))
+        new_rels[rel_i] = new_rel
 
-            rel[0] = tuple(rel[0])
-            rel[1] = tuple(rel[1])
-
-        # process target tokens to connect multiword with underscore
-        new_tokens = []
-        for idx, word in enumerate(tokens):
-            between = False
-            for start, end in tgt_ranges:
-                if idx == start:
-                    new_tokens.append(u'_'.join(tokens[start:end]))
-                    between = True
-                    break
-                elif start < idx < end:
-                    between = True
-            if not between:
-                new_tokens.append(word)
-            else:
-                continue
-        if len(new_rels) > 50 or len(new_tokens) > 50:
+    # process target tokens to connect multiword with underscore
+    new_tokens = []
+    for idx, word in enumerate(tokens):
+        between = False
+        for start, end in tgt_ranges:
+            if idx == start:
+                new_tokens.append(u'_'.join(tokens[start:end]))
+                between = True
+                break
+            elif start < idx < end:
+                between = True
+        if not between:
+            new_tokens.append(word)
+        else:
             continue
-        new_dataset.append((new_tokens, new_rels))
-    return new_dataset
+    return new_tokens, new_rels
+
+def preprocess_dataset(dataset):
+    return list(filter(
+        lambda data: len(data[0]) <= 50 and len(data[1]) <= 50,
+        map(preprocess_data, dataset)))
 
 
 # modified full sentence IE training
@@ -397,7 +384,6 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
     datasets = get_datasets(path)
     if not backup:
         datasets = {stage: preprocess_dataset(dataset) for stage, dataset in datasets.items()}
-    print(datasets['train'])
     # make vocab and get labels
     word_counter = Counter()
     [word_counter.update(tup[0]) for tup in datasets['train']]
