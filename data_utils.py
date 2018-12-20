@@ -16,6 +16,7 @@ random.seed(2)
 Ent = namedtuple("Ent", ["start", "end", "s", "is_pron"])
 Num = namedtuple("Num", ["start", "end", "s"])
 Rel = namedtuple("Rel", ["ent", "num", "type", "aux"])
+stuff_names = ('sent', 'len', 'entdist', 'numdist', 'label')
 
 prons = {"he", "He", "him", "Him", "his", "His", "they", "They", "them", "Them", "their", "Their"}  # leave out "it"
 singular_prons = {"he", "He", "him", "Him", "his", "His"}
@@ -273,7 +274,7 @@ def get_datasets(path="rotowire"):
     return extracted_stuff
 
 
-def append_to_data(tup, sents, lens, entdists, numdists, labels, vocab, labeldict, max_len):
+def get_to_data(tup, vocab, labeldict, max_len):
     """
     tup is (sent, [rels]);
     each rel is ((ent_start, ent_ent, ent_str), (num_start, num_end, num_str), label)
@@ -283,16 +284,12 @@ def append_to_data(tup, sents, lens, entdists, numdists, labels, vocab, labeldic
     sent.extend([-1] * (max_len - sentlen))
     for rel in tup[1]:
         ent, num, label, idthing = rel
-        sents.append(sent)
-        lens.append(sentlen)
         ent_dists = [j - ent[0] if j < ent[0] else j - ent[1] + 1 if j >= ent[1] else 0 for j in xrange(max_len)]
-        entdists.append(ent_dists)
         num_dists = [j - num[0] if j < num[0] else j - num[1] + 1 if j >= num[1] else 0 for j in xrange(max_len)]
-        numdists.append(num_dists)
-        labels.append(labeldict[label])
+        yield sent, sentlen, ent_dists, num_dists, labeldict[label]
 
 
-def append_multilabeled_data(tup, sents, lens, entdists, numdists, labels, vocab, labeldict, max_len):
+def get_multilabeled_data(tup, vocab, labeldict, max_len):
     """
     used for val, since we have contradictory labelings...
     tup is (sent, [rels]);
@@ -309,24 +306,20 @@ def append_multilabeled_data(tup, sents, lens, entdists, numdists, labels, vocab
 
     for rel, label_list in unique_rels.iteritems():
         ent, num = rel
-        sents.append(sent)
-        lens.append(sentlen)
         ent_dists = [j - ent[0] if j < ent[0] else j - ent[1] + 1 if j >= ent[1] else 0 for j in xrange(max_len)]
-        entdists.append(ent_dists)
         num_dists = [j - num[0] if j < num[0] else j - num[1] + 1 if j >= num[1] else 0 for j in xrange(max_len)]
-        numdists.append(num_dists)
-        labels.append([labeldict[label] for label in label_list])
+        yield sent, sentlen, ent_dists, num_dists, [labeldict[label] for label in label_list]
 
 
 def append_labelnums(labels):
-    labelnums = [len(labellist) for labellist in labels]
-    max_num_labels = max(labelnums)
+    max_num_labels = max(map(len, labels))
     print("max num labels", max_num_labels)
 
     # append number of labels to labels
     for i, labellist in enumerate(labels):
-        labellist.extend([-1] * (max_num_labels - len(labellist)))
-        labellist.append(labelnums[i])
+        l = len(labellist)
+        labellist.extend([-1] * (max_num_labels - l))
+        labellist.append(l)
 
 
 def preprocess_data(data):
@@ -393,30 +386,25 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
     word_counter["UNK"] = 1
     vocab = {wrd: i + 1 for i, wrd in enumerate(word_counter.keys())}
     labelset = set()
-    [labelset.update([rel[2] for rel in tup[1]]) for tup in datasets['train']]
+    [labelset.update(rel.type for rel in tup[1]) for tup in datasets['train']]
     labeldict = {label: i + 1 for i, label in enumerate(labelset)}
 
     # save stuff
-    trsents, trlens, trentdists, trnumdists, trlabels = [], [], [], [], []
-    valsents, vallens, valentdists, valnumdists, vallabels = [], [], [], [], []
-    testsents, testlens, testentdists, testnumdists, testlabels = [], [], [], [], []
+    stuffs = {stage: [] for stage in datasets}
 
     max_trlen = max(len(tup[0]) for tup in datasets['train'])
     print("max tr sentence length:", max_trlen)
 
     # do training data
     for tup in datasets['train']:
-        if multilabel_train:
-            append_multilabeled_data(tup, trsents, trlens, trentdists, trnumdists, trlabels, vocab, labeldict,
-                                     max_trlen)
-        else:
-            append_to_data(tup, trsents, trlens, trentdists, trnumdists, trlabels, vocab, labeldict, max_trlen)
+        stuffs['train'].extend((get_multilabeled_data if multilabel_train else get_to_data)(tup, vocab, labeldict, max_trlen))
 
     if multilabel_train:
-        append_labelnums(trlabels)
+        append_labelnums([x[-1] for x in stuffs['train']])
 
     if nonedenom > 0:
         # don't keep all the NONE labeled things
+        trlabels = [x[-1] for x in stuffs['train']]
         none_idxs = [i for i, labellist in enumerate(trlabels) if labellist[0] == labeldict["NONE"]]
         random.shuffle(none_idxs)
         # allow at most 1/(nonedenom+1) of NONE-labeled
@@ -426,76 +414,40 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
         ignore_idxs = set(none_idxs[num_to_keep:])
 
         # get rid of most of the NONE-labeled examples
-        trsents = [thing for i, thing in enumerate(trsents) if i not in ignore_idxs]
-        trlens = [thing for i, thing in enumerate(trlens) if i not in ignore_idxs]
-        trentdists = [thing for i, thing in enumerate(trentdists) if i not in ignore_idxs]
-        trnumdists = [thing for i, thing in enumerate(trnumdists) if i not in ignore_idxs]
-        trlabels = [thing for i, thing in enumerate(trlabels) if i not in ignore_idxs]
+        stuffs['train'] = [thing for i, thing in enumerate(stuffs['train']) if i not in ignore_idxs]
 
-    print(len(trsents), "training examples")
+    print(len(stuffs['train']), "training examples")
 
     if verbose:
-        print(trsents[0])
-        print(trlens[0])
-        print(trentdists[0])
-        print(trnumdists[0])
-        print(trlabels[0])
+        for _ in stuffs['train'][0]:
+            print(_)
 
-    # do val, which we also consider multilabel
-    max_vallen = max((len(tup[0]) for tup in datasets['valid']))
-    for tup in datasets['valid']:
-        # append_to_data(tup, valsents, vallens, valentdists, valnumdists, vallabels, vocab, labeldict, max_len)
-        append_multilabeled_data(tup, valsents, vallens, valentdists, valnumdists, vallabels, vocab, labeldict,
-                                 max_vallen)
+    for stage in ['valid', 'test']:
+        # do val/test, which we also consider multilabel
+        dataset = datasets[stage]
+        max_len = max(len(tup[0]) for tup in dataset)
+        for tup in dataset:
+            stuffs[stage].extend(
+                get_multilabeled_data(tup, vocab, labeldict, max_len))
 
-    append_labelnums(vallabels)
+        append_labelnums([x[-1] for x in stuffs[stage]])
 
-    print(len(valsents), "validation examples")
+        print(len(stuffs[stage]), "{} examples".format(stage))
 
-    # do test, which we also consider multilabel
-    max_testlen = max((len(tup[0]) for tup in datasets['test']))
-    for tup in datasets['test']:
-        # append_to_data(tup, valsents, vallens, valentdists, valnumdists, vallabels, vocab, labeldict, max_len)
-        append_multilabeled_data(tup, testsents, testlens, testentdists, testnumdists, testlabels, vocab, labeldict,
-                                 max_testlen)
-
-    append_labelnums(testlabels)
-
-    print(len(testsents), "test examples")
-
+    stage_to_abbr = {"train": "tr", "valid": "val", "test": "test"}
     h5fi = h5py.File(outfile, "w")
-    h5fi["trsents"] = np.array(trsents, dtype=int)
-    h5fi["trlens"] = np.array(trlens, dtype=int)
-    h5fi["trentdists"] = np.array(trentdists, dtype=int)
-    h5fi["trnumdists"] = np.array(trnumdists, dtype=int)
-    h5fi["trlabels"] = np.array(trlabels, dtype=int)
-    h5fi["valsents"] = np.array(valsents, dtype=int)
-    h5fi["vallens"] = np.array(vallens, dtype=int)
-    h5fi["valentdists"] = np.array(valentdists, dtype=int)
-    h5fi["valnumdists"] = np.array(valnumdists, dtype=int)
-    h5fi["vallabels"] = np.array(vallabels, dtype=int)
-    # h5fi.close()
-
-    # h5fi = h5py.File("test-" + outfile, "w")
-    h5fi["testsents"] = np.array(testsents, dtype=int)
-    h5fi["testlens"] = np.array(testlens, dtype=int)
-    h5fi["testentdists"] = np.array(testentdists, dtype=int)
-    h5fi["testnumdists"] = np.array(testnumdists, dtype=int)
-    h5fi["testlabels"] = np.array(testlabels, dtype=int)
+    for stage, stuff in stuffs.items():
+        abbr = stage_to_abbr[stage]
+        for name, content in zip(stuff_names, zip(*stuff)):
+            h5fi["{}{}s".format(abbr, name)] = np.array(content, dtype=int)
     h5fi.close()
-    # h5fi["vallabelnums"] = np.array(vallabelnums, dtype=int)
-    # h5fi.close()
 
     # write dicts
-    revvocab = dict(((v, k) for k, v in vocab.iteritems()))
-    revlabels = dict(((v, k) for k, v in labeldict.iteritems()))
-    with codecs.open(outfile.split('.')[0] + ".dict", "w+", "utf-8") as f:
-        for i in xrange(1, len(revvocab) + 1):
-            f.write("%s %d \n" % (revvocab[i], i))
-
-    with codecs.open(outfile.split('.')[0] + ".labels", "w+", "utf-8") as f:
-        for i in xrange(1, len(revlabels) + 1):
-            f.write("%s %d \n" % (revlabels[i], i))
+    for d, name in ((vocab, 'dict'), (labeldict, 'labels')):
+        revd = {v: k for k, v in d.iteritems()}
+        with codecs.open("{}.{}".format(outfile.split('.')[0], name), "w+", "utf-8") as f:
+            for i in xrange(1, len(revd) + 1):
+                f.write("%s %d \n" % (revd[i], i))
 
 
 def convert_aux(additional):
@@ -703,25 +655,22 @@ def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False,
 
     # save stuff
     max_len = max((len(tup[0]) for tup in nugz))
-    psents, plens, pentdists, pnumdists, plabels = [], [], [], [], []
+    p = []
 
     rel_reset_indices = []
     for t, tup in enumerate(nugz):
         if not backup or t in sent_reset_indices:  # then last rel is the last of its box
             assert len(psents) == len(plabels)
             rel_reset_indices.append(len(psents))
-        append_multilabeled_data(tup, psents, plens, pentdists, pnumdists, plabels, vocab, labeldict, max_len)
+        p.extend(get_multilabeled_data(tup, vocab, labeldict, max_len))
 
-    append_labelnums(plabels)
+    append_labelnums([x[-1] for x in p])
 
-    print(len(psents), "prediction examples")
+    print(len(p), "prediction examples")
 
     h5fi = h5py.File(outfile, "w")
-    h5fi["valsents"] = np.array(psents, dtype=int)
-    h5fi["vallens"] = np.array(plens, dtype=int)
-    h5fi["valentdists"] = np.array(pentdists, dtype=int)
-    h5fi["valnumdists"] = np.array(pnumdists, dtype=int)
-    h5fi["vallabels"] = np.array(plabels, dtype=int)
+    for name, content in zip(stuff_names, zip(*p)):
+        h5fi["val{}s".format(name)] = np.array(content, dtype=int)
     h5fi["boxrestartidxs"] = np.array(np.array(rel_reset_indices) + 1, dtype=int)  # 1-indexed
     h5fi.close()
 
