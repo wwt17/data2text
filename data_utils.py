@@ -257,13 +257,13 @@ def get_datasets(path="rotowire"):
 
     all_ents, players, teams, cities = get_ents(datasets["train"])
 
-    extracted_stuff = []
-    for stage in stages:
+    extracted_stuff = {}
+    for stage, dataset in datasets.items():
         nugz = []
-        for i, entry in enumerate(datasets[stage]):
+        for i, entry in enumerate(dataset):
             summ = " ".join(entry['summary'])
             nugz.extend(get_candidate_rels(entry, summ, all_ents, prons, players, teams, cities))
-        extracted_stuff.append(nugz)
+        extracted_stuff[stage] = nugz
 
     return extracted_stuff
 
@@ -324,104 +324,102 @@ def append_labelnums(labels):
         labellist.append(labelnums[i])
 
 
-def preprocess_datasets(datasets):
-    new_datasets = []
-    for dataset in datasets:
-        new_dataset = []
-        for data in dataset:
-            rels = data[1]
-            tokens = data[0]
-            tgt_ranges = set()
-            new_rels = []
-            for rel in rels:
-                rel_type = rel[2]
-                aux = rel[3]
+def preprocess_dataset(dataset):
+    new_dataset = []
+    for data in dataset:
+        rels = data[1]
+        tokens = data[0]
+        tgt_ranges = set()
+        new_rels = []
+        for rel in rels:
+            rel_type = rel[2]
+            aux = rel[3]
 
-                ent_start = int(rel[0][0])
-                ent_end = int(rel[0][1])
-                ent = unicode(rel[0][2]).replace(' ', '_')
-                val_start = int(rel[1][0])
-                val_end = int(rel[1][1])
-                val = unicode(rel[1][2]).replace(' ', '_')
-                try:
-                    val = int(val)
-                except ValueError:
-                    val = val
-                new_rels.append([[ent_start, ent_end, ent, rel[0][3]],
-                                 [val_start, val_end, val],
-                                 rel_type,
-                                 aux])
-                if ent_end - ent_start > 1:
-                    tgt_ranges.add((ent_start, ent_end))
-                if val_end - val_start > 1:
-                    tgt_ranges.add((val_start, val_end))
+            ent_start = int(rel[0][0])
+            ent_end = int(rel[0][1])
+            ent = unicode(rel[0][2]).replace(' ', '_')
+            val_start = int(rel[1][0])
+            val_end = int(rel[1][1])
+            val = unicode(rel[1][2]).replace(' ', '_')
+            try:
+                val = int(val)
+            except ValueError:
+                val = val
+            new_rels.append([[ent_start, ent_end, ent, rel[0][3]],
+                             [val_start, val_end, val],
+                             rel_type,
+                             aux])
+            if ent_end - ent_start > 1:
+                tgt_ranges.add((ent_start, ent_end))
+            if val_end - val_start > 1:
+                tgt_ranges.add((val_start, val_end))
 
-            # process start and end idxs
-            for rel in new_rels:
-                ent_offset = 0
-                val_offset = 0
-                for start, end in tgt_ranges:
-                    if rel[0][0] >= end:
-                        ent_offset += end - start - 1
-                    if rel[1][0] >= end:
-                        val_offset += end - start - 1
-                rel[0][0] -= ent_offset
-                rel[0][1] = rel[0][0] + 1
-                rel[1][0] -= val_offset
-                rel[1][1] = rel[1][0] + 1
+        # process start and end idxs
+        for rel in new_rels:
+            ent_offset = 0
+            val_offset = 0
+            for start, end in tgt_ranges:
+                if rel[0][0] >= end:
+                    ent_offset += end - start - 1
+                if rel[1][0] >= end:
+                    val_offset += end - start - 1
+            rel[0][0] -= ent_offset
+            rel[0][1] = rel[0][0] + 1
+            rel[1][0] -= val_offset
+            rel[1][1] = rel[1][0] + 1
 
-                rel[0] = tuple(rel[0])
-                rel[1] = tuple(rel[1])
+            rel[0] = tuple(rel[0])
+            rel[1] = tuple(rel[1])
 
-            # process target tokens to connect multiword with underscore
-            new_tokens = []
-            for idx, word in enumerate(tokens):
-                between = False
-                for start, end in tgt_ranges:
-                    if idx == start:
-                        new_tokens.append(u'_'.join(tokens[start:end]))
-                        between = True
-                        break
-                    elif start < idx < end:
-                        between = True
-                if not between:
-                    new_tokens.append(word)
-                else:
-                    continue
-            if len(new_rels) > 50 or len(new_tokens) > 50:
+        # process target tokens to connect multiword with underscore
+        new_tokens = []
+        for idx, word in enumerate(tokens):
+            between = False
+            for start, end in tgt_ranges:
+                if idx == start:
+                    new_tokens.append(u'_'.join(tokens[start:end]))
+                    between = True
+                    break
+                elif start < idx < end:
+                    between = True
+            if not between:
+                new_tokens.append(word)
+            else:
                 continue
-            new_dataset.append((new_tokens, new_rels))
-        new_datasets.append(new_dataset)
-    return new_datasets
+        if len(new_rels) > 50 or len(new_tokens) > 50:
+            continue
+        new_dataset.append((new_tokens, new_rels))
+    return new_dataset
 
 
 # modified full sentence IE training
 def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonedenom=0, backup=False, verbose=True):
     datasets = get_datasets(path)
     if not backup:
-        datasets = preprocess_datasets(datasets)
+        datasets = {stage: preprocess_dataset(dataset) for stage, dataset in datasets.items()}
+    print(datasets['train'])
     # make vocab and get labels
     word_counter = Counter()
-    [word_counter.update(tup[0]) for tup in datasets[0]]
+    [word_counter.update(tup[0]) for tup in datasets['train']]
     for k in word_counter.keys():
         if word_counter[k] < 2:
             del word_counter[k]  # will replace w/ unk
     word_counter["UNK"] = 1
-    vocab = dict(((wrd, i + 1) for i, wrd in enumerate(word_counter.keys())))
+    vocab = {wrd: i + 1 for i, wrd in enumerate(word_counter.keys())}
     labelset = set()
-    [labelset.update([rel[2] for rel in tup[1]]) for tup in datasets[0]]
-    labeldict = dict(((label, i + 1) for i, label in enumerate(labelset)))
+    [labelset.update([rel[2] for rel in tup[1]]) for tup in datasets['train']]
+    labeldict = {label: i + 1 for i, label in enumerate(labelset)}
 
     # save stuff
     trsents, trlens, trentdists, trnumdists, trlabels = [], [], [], [], []
     valsents, vallens, valentdists, valnumdists, vallabels = [], [], [], [], []
     testsents, testlens, testentdists, testnumdists, testlabels = [], [], [], [], []
 
-    max_trlen = max((len(tup[0]) for tup in datasets[0]))
+    max_trlen = max(len(tup[0]) for tup in datasets['train'])
     print("max tr sentence length:", max_trlen)
 
     # do training data
-    for tup in datasets[0]:
+    for tup in datasets['train']:
         if multilabel_train:
             append_multilabeled_data(tup, trsents, trlens, trentdists, trnumdists, trlabels, vocab, labeldict,
                                      max_trlen)
@@ -458,8 +456,8 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
         print(trlabels[0])
 
     # do val, which we also consider multilabel
-    max_vallen = max((len(tup[0]) for tup in datasets[1]))
-    for tup in datasets[1]:
+    max_vallen = max((len(tup[0]) for tup in datasets['valid']))
+    for tup in datasets['valid']:
         # append_to_data(tup, valsents, vallens, valentdists, valnumdists, vallabels, vocab, labeldict, max_len)
         append_multilabeled_data(tup, valsents, vallens, valentdists, valnumdists, vallabels, vocab, labeldict,
                                  max_vallen)
@@ -469,8 +467,8 @@ def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonede
     print(len(valsents), "validation examples")
 
     # do test, which we also consider multilabel
-    max_testlen = max((len(tup[0]) for tup in datasets[2]))
-    for tup in datasets[2]:
+    max_testlen = max((len(tup[0]) for tup in datasets['test']))
+    for tup in datasets['test']:
         # append_to_data(tup, valsents, vallens, valentdists, valnumdists, vallabels, vocab, labeldict, max_len)
         append_multilabeled_data(tup, testsents, testlens, testentdists, testnumdists, testlabels, vocab, labeldict,
                                  max_testlen)
@@ -633,41 +631,22 @@ def make_translate_corpus(dataset):
 # for extracting sentence-data pairs
 def extract_sentence_data(outfile, path="rotowire"):
     datasets = get_datasets(path)
-    # output json
-    with codecs.open(outfile + '.train.json', 'w', 'utf-8') as of:
-        json.dump(split_sent_to_triples(datasets[0]), of)
-    with codecs.open(outfile + '.valid.json', 'w', 'utf-8') as of:
-        json.dump(split_sent_to_triples(datasets[1]), of)
-    with codecs.open(outfile + '.test.json', 'w', 'utf-8') as of:
-        json.dump(split_sent_to_triples(datasets[2]), of)
+    for stage, dataset in datasets.items():
+        # output json
+        with codecs.open(outfile + '.{}.json'.format(stage), 'w', 'utf-8') as of:
+            json.dump(split_sent_to_triples(dataset), of)
 
-    # output translate data files
-    with codecs.open(outfile + '.train.src', 'w', 'utf-8') as of1, \
-            codecs.open(outfile + '.train.tgt', 'w', 'utf-8') as of2:
-        src_lines, tgt_lines = make_translate_corpus(datasets[0])
-        of1.write(u'\n'.join(src_lines))
-        of2.write(u'\n'.join(tgt_lines))
-    with codecs.open(outfile + '.valid.src', 'w', 'utf-8') as of1, \
-            codecs.open(outfile + '.valid.tgt', 'w', 'utf-8') as of2:
-        src_lines, tgt_lines = make_translate_corpus(datasets[1])
-        of1.write(u'\n'.join(src_lines))
-        of2.write(u'\n'.join(tgt_lines))
-    with codecs.open(outfile + '.test.src', 'w', 'utf-8') as of1, \
-            codecs.open(outfile + '.test.tgt', 'w', 'utf-8') as of2:
-        src_lines, tgt_lines = make_translate_corpus(datasets[2])
-        of1.write(u'\n'.join(src_lines))
-        of2.write(u'\n'.join(tgt_lines))
+        # output translate data files
+        with codecs.open(outfile + '.{}.src'.format(stage), 'w', 'utf-8') as of1, \
+                codecs.open(outfile + '.{}.tgt'.format(stage), 'w', 'utf-8') as of2:
+            src_lines, tgt_lines = make_translate_corpus(dataset)
+            of1.write(u'\n'.join(src_lines))
+            of2.write(u'\n'.join(tgt_lines))
 
-    # output csv
-    with codecs.open(outfile + '.train', 'w', 'utf-8') as of:
-        for data in datasets[0]:
-            write_data_to_line(data, of)
-    with codecs.open(outfile + '.valid', 'w', 'utf-8') as of:
-        for data in datasets[1]:
-            write_data_to_line(data, of)
-    with codecs.open(outfile + '.test', 'w', 'utf-8') as of:
-        for data in datasets[2]:
-            write_data_to_line(data, of)
+        # output csv
+        with codecs.open(outfile + '.{}'.format(stage), 'w', 'utf-8') as of:
+            for data in dataset:
+                write_data_to_line(data, of)
 
 
 def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False, backup=False):
