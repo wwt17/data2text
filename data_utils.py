@@ -248,7 +248,7 @@ def append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, 
     return candrels
 
 
-def get_datasets(path="../boxscore-data/rotowire"):
+def get_datasets(path="rotowire"):
     with codecs.open(os.path.join(path, "train.json"), "r", "utf-8") as f:
         trdata = json.load(f)
 
@@ -404,7 +404,7 @@ def preprocess_datasets(datasets):
 
 
 # modified full sentence IE training
-def save_full_sent_data(outfile, path="../boxscore-data/rotowire", multilabel_train=False, nonedenom=0, backup=False, verbose=True):
+def save_full_sent_data(outfile, path="rotowire", multilabel_train=False, nonedenom=0, backup=False, verbose=True):
     datasets = get_datasets(path)
     if not backup:
         datasets = preprocess_datasets(datasets)
@@ -639,7 +639,7 @@ def make_translate_corpus(dataset):
 
 
 # for extracting sentence-data pairs
-def extract_sentence_data(outfile, path="../boxscore-data/rotowire"):
+def extract_sentence_data(outfile, path="rotowire"):
     datasets = get_datasets(path)
     # output json
     with codecs.open(outfile + '.train.json', 'w', 'utf-8') as of:
@@ -1090,8 +1090,8 @@ def save_coref_task_data(outfile, inp_file="full_newnba_prepdata2.json"):
             f.write("%s %d \n" % (revlabels[i], i))
 
 
-def mask_output(input_path):
-    with codecs.open(os.path.join("../boxscore-data/rotowire", "train.json"), "r", "utf-8") as f:
+def mask_output(input_path, path="rotowire"):
+    with codecs.open(os.path.join(path, "train.json"), "r", "utf-8") as f:
         trdata = json.load(f)
 
     all_ents, players, teams, cities = get_ents(trdata)
@@ -1131,8 +1131,8 @@ def mask_output(input_path):
         f.write('\n'.join([' '.join(s) for s in masked_sents]))
 
 
-def save_ent(output_path):
-    with codecs.open(os.path.join("../boxscore-data/rotowire", "train.json"), "r", "utf-8") as f:
+def save_ent(output_path, path="rotowire"):
+    with codecs.open(os.path.join(path, "train.json"), "r", "utf-8") as f:
         trdata = json.load(f)
 
     all_ents, players, teams, cities = get_ents(trdata)
@@ -1142,32 +1142,33 @@ def save_ent(output_path):
         json.dump(list(all_ents), f)
 
 
-parser = argparse.ArgumentParser(description='Utility Functions')
-parser.add_argument('-input_path', type=str, default="",
-                    help="path to input")
-parser.add_argument('-output_fi', type=str, default="",
-                    help="desired path to output file")
-parser.add_argument('-gen_fi', type=str, default="",
-                    help="path to file containing generated summaries")
-parser.add_argument('-dict_pfx', type=str, default="roto-ie",
-                    help="prefix of .dict and .labels files")
-parser.add_argument('-mode', type=str, default='ptrs',
-                    choices=['ptrs', 'make_ie_data', 'prep_gen_data', 'extract_sent', 'mask', 'save_ent'],
-                    help="what utility function to run")
-parser.add_argument('-test', action='store_true', help='use test data')
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Utility Functions')
+    parser.add_argument('-input_path', type=str, default="",
+                        help="path to input")
+    parser.add_argument('-output_fi', type=str, default="",
+                        help="desired path to output file")
+    parser.add_argument('-gen_fi', type=str, default="",
+                        help="path to file containing generated summaries")
+    parser.add_argument('-dict_pfx', type=str, default="roto-ie",
+                        help="prefix of .dict and .labels files")
+    parser.add_argument('-mode', type=str, default='ptrs',
+                        choices=['ptrs', 'make_ie_data', 'prep_gen_data', 'extract_sent', 'mask', 'save_ent'],
+                        help="what utility function to run")
+    parser.add_argument('-test', action='store_true', help='use test data')
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
-if args.mode == 'ptrs':
-    make_pointerfi(args.output_fi, inp_file=args.input_path)
-elif args.mode == 'make_ie_data':
-    save_full_sent_data(args.output_fi, path=args.input_path, multilabel_train=True)
-elif args.mode == 'prep_gen_data':
-    prep_generated_data(args.gen_fi, args.dict_pfx, args.output_fi, path=args.input_path,
-                        test=args.test)
-elif args.mode == 'extract_sent':
-    extract_sentence_data(args.output_fi, path=args.input_path)
-elif args.mode == 'mask':
-    mask_output(args.input_path)
-elif args.mode == 'save_ent':
-    save_ent(args.output_fi)
+    if args.mode == 'ptrs':
+        make_pointerfi(args.output_fi, inp_file=args.input_path)
+    elif args.mode == 'make_ie_data':
+        save_full_sent_data(args.output_fi, path=args.input_path, multilabel_train=True)
+    elif args.mode == 'prep_gen_data':
+        prep_generated_data(args.gen_fi, args.dict_pfx, args.output_fi, path=args.input_path,
+                            test=args.test)
+    elif args.mode == 'extract_sent':
+        extract_sentence_data(args.output_fi, path=args.input_path)
+    elif args.mode == 'mask':
+        mask_output(args.input_path)
+    elif args.mode == 'save_ent':
+        save_ent(args.output_fi)
