@@ -231,9 +231,9 @@ def get_rels(entry, ents, nums, players, teams, cities):
     return rels
 
 
-def append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, candrels):
+def get_candidate_rels(entry, summ, all_ents, prons, players, teams, cities):
     """
-    appends tuples of form (sentence_tokens, [rels]) to candrels
+    generate tuples of form (sentence_tokens, [rels]) to candrels
     """
     sents = sent_tokenize(summ)
     for j, sent in enumerate(sents):
@@ -243,8 +243,7 @@ def append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, 
         nums = extract_numbers(tokes)
         rels = get_rels(entry, ents, nums, players, teams, cities)
         if len(rels) > 0:
-            candrels.append((tokes, rels))
-    return candrels
+            yield (tokes, rels)
 
 
 stages = ["train", "valid", "test"]
@@ -263,7 +262,7 @@ def get_datasets(path="rotowire"):
         nugz = []
         for i, entry in enumerate(datasets[stage]):
             summ = " ".join(entry['summary'])
-            append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, nugz)
+            nugz.extend(get_candidate_rels(entry, summ, all_ents, prons, players, teams, cities))
         extracted_stuff.append(nugz)
 
     return extracted_stuff
@@ -734,7 +733,7 @@ def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False,
         sent_reset_indices = {0}  # sentence indices where a box/story is reset
         for i, entry in enumerate(valdata):
             summ = gens[i]
-            append_candidate_rels(entry, summ, all_ents, prons, players, teams, cities, nugz)
+            nugz.extend(get_candidate_rels(entry, summ, all_ents, prons, players, teams, cities))
             sent_reset_indices.add(len(nugz))
 
     # save stuff
