@@ -141,7 +141,7 @@ def extract_numbers(sent):
             i += 1
         elif toke in number_words and annoying_number_word(sent, i):  # get longest span  (this is kind of stupid)
             j = 1
-            while i + j <= len(sent) and sent[i + j] in number_words and annoying_number_word(sent, i + j):
+            while i + j < len(sent) and sent[i + j] in number_words and annoying_number_word(sent, i + j):
                 j += 1
             try:
                 sent_nums.append(Num(i, i + j, text2num(" ".join(sent[i:i + j]))))
@@ -590,7 +590,7 @@ def extract_sentence_data(outfile, path="rotowire"):
                 write_data_to_line(data, of)
 
 
-def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False, backup=False):
+def prep_generated_data(genfile, dict_pfx, outfile, train_file, val_file, backup=False):
     # recreate vocab and labeldict
     def read_dict(s):
         d = {}
@@ -605,31 +605,25 @@ def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False,
     with open(genfile, "r") as f:
         gens = f.readlines()
 
-    with open(os.path.join(path, "train.json"), "r") as f:
+    with open(train_file, "r") as f:
         trdata = json.load(f)
 
     all_ents, players, teams, cities = get_ents(trdata)
 
-    valfi = ("roto-sent-data.test.src" if test else "roto-sent-data.valid.src") if not backup else ("test.json" if test else "valid.json")
-    with open(os.path.join(path, valfi), "r") as f:
-        if not backup:
-            vallines = f.readlines()
-        else:
-            valdata = json.load(f)
-    if not backup:
-        valdata = [[x.split('|') for x in line.split()] for line in vallines]
-
-    assert len(valdata) == len(gens)
-
     if not backup:
         all_ents = set(x.replace(' ', '_') for x in all_ents)
+
+    with open(val_file, "r") as f:
+        valdata = json.load(f) if backup else [[x.split('|') for x in line.split()] for line in f]
+
+    assert len(valdata) == len(gens), "len(valdata) = {}, len(gens) = {}".format(len(valdata), len(gens))
 
     # extract ent-num pairs from generated sentence
     nugz = []  # to hold (sentence_tokens, [rels]) tuples
     if not backup:
-        for idx, summ in enumerate(gens):
+        for entry, summ in zip(valdata, gens):
             gold_rels = []
-            for rel in valdata[idx]:
+            for rel in entry:
                 if rel[1] not in ("TEAM_NAME", "PLAYER_NAME"):
                     gold_rels.append((rel[2], int(rel[0]), rel[1]))
 
@@ -643,14 +637,13 @@ def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False,
                     for rel in gold_rels:
                         if ent[2] == rel[0] and num[2] == rel[1]:
                             match = True
-                            extracted_rels.append((ent, num, rel[2], None))
+                            extracted_rels.append(Rel(ent, num, rel[2], None))
                     if not match:
-                        extracted_rels.append((ent, num, 'NONE', None))
+                        extracted_rels.append(Rel(ent, num, 'NONE', None))
             nugz.append((sent, extracted_rels))
     else:
         sent_reset_indices = {0}  # sentence indices where a box/story is reset
-        for i, entry in enumerate(valdata):
-            summ = gens[i]
+        for entry, summ in zip(valdata, gens):
             nugz.extend(get_candidate_rels(entry, summ, all_ents, prons, players, teams, cities))
             sent_reset_indices.add(len(nugz))
 
@@ -661,8 +654,7 @@ def prep_generated_data(genfile, dict_pfx, outfile, path="rotowire", test=False,
     rel_reset_indices = []
     for t, tup in enumerate(nugz):
         if not backup or t in sent_reset_indices:  # then last rel is the last of its box
-            assert len(psents) == len(plabels)
-            rel_reset_indices.append(len(psents))
+            rel_reset_indices.append(len(p))
         p.extend(get_multilabeled_data(tup, vocab, labeldict, max_len))
 
     append_labelnums([x[-1] for x in p])
@@ -1059,10 +1051,11 @@ if __name__ == '__main__':
                         help="path to file containing generated summaries")
     parser.add_argument('-dict_pfx', type=str, default="roto-ie",
                         help="prefix of .dict and .labels files")
+    parser.add_argument('-val_file', type=str, default=os.path.join("nba_data", "gold.valid.txt"),
+                        help="file as reference in prep_gen_data mode, of which every entry is in the form entry|attribute|value")
     parser.add_argument('-mode', type=str, default='ptrs',
                         choices=['ptrs', 'make_ie_data', 'prep_gen_data', 'extract_sent', 'mask', 'save_ent'],
                         help="what utility function to run")
-    parser.add_argument('-test', action='store_true', help='use test data')
 
     args = parser.parse_args()
 
@@ -1071,8 +1064,9 @@ if __name__ == '__main__':
     elif args.mode == 'make_ie_data':
         save_full_sent_data(args.output_fi, path=args.input_path, multilabel_train=True)
     elif args.mode == 'prep_gen_data':
-        prep_generated_data(args.gen_fi, args.dict_pfx, args.output_fi, path=args.input_path,
-                            test=args.test)
+        prep_generated_data(args.gen_fi, args.dict_pfx, args.output_fi,
+                            train_file=os.path.join(args.input_path, "train.json"),
+                            val_file=args.val_file)
     elif args.mode == 'extract_sent':
         extract_sentence_data(args.output_fi, path=args.input_path)
     elif args.mode == 'mask':
