@@ -335,10 +335,10 @@ function get_multilabel_acc(model, valbatches, ignoreIdx, convens, lstmens)
         g_argmaxes:resize(sent:size(1), 1)
         torch.max(g_maxes, g_argmaxes, preds, 2)
         --pred5s = pred5s + g_argmaxes:eq(5):sum()
-	--true5s = true5s + labels:eq(5):sum()
-	nonnolabel = nonnolabel + labels:select(2,1):ne(ignoreIdx):sum()
+        --true5s = true5s + labels:eq(5):sum()
+        nonnolabel = nonnolabel + labels:select(2,1):ne(ignoreIdx):sum()
         --g_one_hot:resize(sent:size(1), labels:size(2)):zero()
-	g_one_hot:resize(sent:size(1), preds:size(2)):zero()
+        g_one_hot:resize(sent:size(1), preds:size(2)):zero()
         local numpreds = 0
         local in_denominator = g_argmaxes
         for k = 1, sent:size(1) do
@@ -397,14 +397,7 @@ function eval_gens(predbatches, ignoreIdx, boxrestartidxs, convens, lstmens)
     assert(ilabels[ignoreIdx] == "NONE")
   end
 
-  local boxRestarts
-  if boxrestartidxs then
-    boxRestarts = {}
-    assert(boxrestartidxs:dim() == 1)
-    for i = 1, boxrestartidxs:size(1) do
-      boxRestarts[boxrestartidxs[i]] = true
-    end
-  end
+  local boxrestartidxs_ptr = 0
 
   if not g_maxes then
     g_maxes = torch.CudaTensor()
@@ -490,16 +483,19 @@ function eval_gens(predbatches, ignoreIdx, boxrestartidxs, convens, lstmens)
     g_correct_buf:gather(g_one_hot, 2, g_argmaxes)
 
     for k = 1, sent:size(1) do
-      candNum = candNum + 1
-      if boxRestarts and boxRestarts[candNum] then
-          tupfile:write('\n')
-          seen = {}
+      while boxrestartidxs_ptr < boxrestartidxs:size(1) and boxrestartidxs[boxrestartidxs_ptr + 1] <= candNum do
+          boxrestartidxs_ptr = boxrestartidxs_ptr + 1
+          if candNum > 0 then
+              tupfile:write('\n')
+              seen = {}
+          end
       end
+      candNum = candNum + 1
       if not ignoreIdx or in_denominator[k][1] ~= ignoreIdx then
         local sentstr = idxstostring(sent[k], ivocab)
         local entarg, numarg = get_args(sent[k], ent_dists[k], num_dists[k], ivocab)
         local predkey = entarg .. numarg .. ilabels[g_argmaxes[k][1]]
-        tupfile:write(entarg, '|', numarg, '|', ilabels[g_argmaxes[k][1]], '\n')
+        tupfile:write(numarg, '|', ilabels[g_argmaxes[k][1]], '|', entarg, ' ')
         if g_correct_buf[k][1] > 0 then
           if seen[predkey] then
               ndupcorrects = ndupcorrects + 1
@@ -526,13 +522,23 @@ end
 
 
 function set_up_saved_models()
-  local convens_paths = {"roto-convie-ep3-96-49",
-                         "roto-convie-ep5-95-64",
-			             "roto-convie-ep9-95-69"}
+  local convens_paths = {
+--    "conv1ie-ep6-94-74.t7",
+--    "conv2ie-ep3-94-60.t7",
+--    "conv3ie-ep8-95-72.t7"
+    "roto-convie-ep3-96-49",
+    "roto-convie-ep5-95-64",
+    "roto-convie-ep9-95-69"
+  }
 
-  local lstmens_paths = {"roto-blstmie-ep2-95-70",
-                         "roto-blstmie-ep9-91-79",
-			             "roto-blstmie-ep3-94-72"}
+  local lstmens_paths = {
+--    "blstm1ie-ep4-93-75.t7",
+--    "blstm2ie-ep3-93-71.t7",
+--    "blstm3ie-ep2-94-72.t7"
+    "roto-blstmie-ep2-95-70",
+    "roto-blstmie-ep9-91-79",
+    "roto-blstmie-ep3-94-72"
+  }
   opt.embed_size = 200
   opt.num_filters = 200
   opt.conv_fc_layer_size = 500
@@ -575,7 +581,7 @@ function main()
           end
       end
 
-    	eval_gens(pred_batches, opt.ignore_idx, pboxrestartidxs, convens, lstmens)
+      eval_gens(pred_batches, opt.ignore_idx, pboxrestartidxs, convens, lstmens)
       return
     end
 
@@ -599,9 +605,9 @@ function main()
         print("epoch", i, "lr:", opt.lr)
         local loss = 0
         model:training()
-	      model:get(1):get(1).weight[word_pad]:zero()
-	      model:get(1):get(2).weight[ent_dist_pad]:zero()
-	      model:get(1):get(3).weight[num_dist_pad]:zero()
+        model:get(1):get(1).weight[word_pad]:zero()
+        model:get(1):get(2).weight[ent_dist_pad]:zero()
+        model:get(1):get(3).weight[num_dist_pad]:zero()
         for j = 1, #trbatches do
             grads:zero()
             local sent = trbatches[j].sent:cudaLong()
@@ -613,28 +619,28 @@ function main()
             local dLdpreds = crit:backward(preds, labels)
             model:backward({sent, ent_dists, num_dists}, dLdpreds)
 
-	          if opt.lstm then
-               model:get(1):get(1).gradWeight[word_pad]:zero()
-	             model:get(1):get(2).gradWeight[ent_dist_pad]:zero()
-	             model:get(1):get(3).gradWeight[num_dist_pad]:zero()
-	             local shrinkage = 5/grads:norm(2)
-	             if shrinkage < 1 then
-	                grads:mul(shrinkage)
-	             end
-	          end
+            if opt.lstm then
+                 model:get(1):get(1).gradWeight[word_pad]:zero()
+                 model:get(1):get(2).gradWeight[ent_dist_pad]:zero()
+                 model:get(1):get(3).gradWeight[num_dist_pad]:zero()
+                 local shrinkage = 5/grads:norm(2)
+                 if shrinkage < 1 then
+                    grads:mul(shrinkage)
+                 end
+            end
 
             params:add(-opt.lr, grads)
 
-	    model:get(1):get(1).weight[word_pad]:zero()
-	    model:get(1):get(2).weight[ent_dist_pad]:zero()
-	    model:get(1):get(3).weight[num_dist_pad]:zero()
+            model:get(1):get(1).weight[word_pad]:zero()
+            model:get(1):get(2).weight[ent_dist_pad]:zero()
+            model:get(1):get(3).weight[num_dist_pad]:zero()
         end
         print("train loss:", loss/#trbatches)
 
         local acc, rec = get_multilabel_acc(model, valbatches, opt.ignore_idx)
         print("acc:", acc)
 
-	local savefi = string.format("%s-ep%d-%d-%d", opt.savefile, i, math.floor(100*acc), math.floor(100*rec))
+        local savefi = string.format("%s-ep%d-%d-%d", opt.savefile, i, math.floor(100*acc), math.floor(100*rec))
         print("saving to", savefi)
         torch.save(savefi, params)
         print("")

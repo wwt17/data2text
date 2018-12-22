@@ -664,7 +664,7 @@ def prep_generated_data(genfile, dict_pfx, outfile, train_file, val_file, backup
     h5fi = h5py.File(outfile, "w")
     for name, content in zip(stuff_names, zip(*p)):
         h5fi["val{}s".format(name)] = np.array(content, dtype=int)
-    h5fi["boxrestartidxs"] = np.array(np.array(rel_reset_indices) + 1, dtype=int)  # 1-indexed
+    h5fi["boxrestartidxs"] = np.array(np.array(rel_reset_indices), dtype=int)  # 1-indexed
     h5fi.close()
 
 
