@@ -4,7 +4,11 @@ from __future__ import absolute_import
 
 import sys
 import argparse
+from collections import namedtuple
 from pyxdameraulevenshtein import normalized_damerau_levenshtein_distance
+from text2num import text2num, NumberException
+
+Item = namedtuple("Item", ["number", "label", "entry"])
 
 full_names = ['Atlanta Hawks', 'Boston Celtics', 'Brooklyn Nets', 'Charlotte Hornets',
  'Chicago Bulls', 'Cleveland Cavaliers', 'Detroit Pistons', 'Indiana Pacers',
@@ -33,56 +37,66 @@ for team in full_names:
         teams.add(pieces[2])
 
 
-def same_ent(e1, e2):
-    if e1 in cities or e1 in teams:
-        return e1 == e2 or any((e1 in fullname and e2 in fullname for fullname in full_names))
+def entry_eq(e1, e2):
+    if e1 in cities or e1 in teams or e2 in cities or e2 in teams:
+        return e1 == e2 or any(e1 in fullname and e2 in fullname for fullname in full_names)
     else:
         return e1 in e2 or e2 in e1
 
-def trip_match(t1, t2):
-    return t1[1] == t2[1] and t1[2] == t2[2] and same_ent(t1[0], t2[0])
+def item_eq(t1, t2):
+    return t1.number == t2.number and t1.label == t2.label and entry_eq(t1.entry, t2.entry)
 
-def dedup_triples(triplist):
+def dedup_items(item_list):
     """
     this will be inefficient but who cares
     """
     ret = []
-    for i, t_i in enumerate(triplist):
+    for i, t_i in enumerate(item_list):
         for j in xrange(i):
-            t_j = triplist[j]
-            if trip_match(t_i, t_j):
+            t_j = item_list[j]
+            if item_eq(t_i, t_j):
                 break
         else:
             ret.append(t_i)
     return ret
 
-def get_triples(fi):
+def get_items(fi):
+    def process_item(item):
+        try:
+            item[0] = int(item[0])
+        except ValueError:
+            try:
+                item[0] = text2num(item[0])
+            except NumberException:
+                pass
+        return Item(*item)
+
     with open(fi) as f:
         return list(map(
-            lambda line: dedup_triples(list(map(
-                lambda s: tuple(s.split('|')),
-                line.strip().split()))),
+            lambda line: dedup_items(list(filter(
+                lambda item: isinstance(item.number, int),
+                map(lambda s: process_item(s.split('|')),
+                    line.strip().split())))),
             f))
 
-def calc_precrec(gold_triples, pred_triples):
-    total_tp, total_predicted, total_gold = 0, 0, 0
-    for i, triplist in enumerate(pred_triples):
-        tp = sum((1 for j in xrange(len(triplist))
-                    if any(trip_match(triplist[j], gold_triples[i][k])
-                           for k in xrange(len(gold_triples[i])))))
+def calc_precrec(gold_items, pred_items):
+    total_tp, total_pred, total_gold = 0, 0, 0
+    for gold_item_list, pred_item_list in zip(gold_items, pred_items):
+        tp = sum(1 for pred_item in pred_item_list if any(
+                 item_eq(pred_item, gold_item) for gold_item in gold_item_list))
         total_tp += tp
-        total_predicted += len(triplist)
-        total_gold += len(gold_triples[i])
-    avg_prec = total_tp / total_predicted
+        total_pred += len(pred_item_list)
+        total_gold += len(gold_item_list)
+    avg_prec = total_tp / total_pred
     avg_rec = total_tp / total_gold
-    print("totals:", total_tp, total_predicted, total_gold)
+    print("totals:", total_tp, total_pred, total_gold)
     print("prec:", avg_prec, "rec:", avg_rec)
     return avg_prec, avg_rec
 
 def norm_dld(l1, l2):
     ascii_start = 0
     # make a string for l1
-    # all triples are unique...
+    # all items are unique...
     s1 = ''.join((chr(ascii_start+i) for i in xrange(len(l1))))
     s2 = ''
     next_char = ascii_start + len(s1)
@@ -90,7 +104,7 @@ def norm_dld(l1, l2):
         found = None
         #next_char = chr(ascii_start+len(s1)+j)
         for k in xrange(len(l1)):
-            if trip_match(l2[j], l1[k]):
+            if item_eq(l2[j], l1[k]):
                 found = s1[k]
                 #next_char = s1[k]
                 break
@@ -103,11 +117,11 @@ def norm_dld(l1, l2):
     # return 1- , since this thing gives 0 to perfect matches etc
     return 1.0-normalized_damerau_levenshtein_distance(s1, s2)
 
-def calc_dld(gold_triples, pred_triples):
+def calc_dld(gold_items, pred_items):
     total_score = 0
-    for i, triplist in enumerate(pred_triples):
-        total_score += norm_dld(triplist, gold_triples[i])
-    avg_score = total_score / len(pred_triples)
+    for gold_item_list, pred_item_list in zip(gold_items, pred_items):
+        total_score += norm_dld(pred_item_list, gold_item_list)
+    avg_score = total_score / len(pred_items)
     print("avg score:", avg_score)
     return avg_score
 
@@ -116,10 +130,10 @@ if __name__ == '__main__':
     argparser.add_argument('gold_file')
     argparser.add_argument('pred_file')
     args = argparser.parse_args()
-    gold_triples, pred_triples = map(
-        get_triples, (args.gold_file, args.pred_file))
-    assert len(gold_triples) == len(pred_triples), \
+    gold_items, pred_items = map(
+        get_items, (args.gold_file, args.pred_file))
+    assert len(gold_items) == len(pred_items), \
         "len(gold) = {}, len(pred) = {}".format(
-            len(gold_triples), len(pred_triples))
-    calc_precrec(gold_triples, pred_triples)
-    calc_dld(gold_triples, pred_triples)
+            len(gold_items), len(pred_items))
+    calc_precrec(gold_items, pred_items)
+    calc_dld(gold_items, pred_items)

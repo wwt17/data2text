@@ -127,7 +127,6 @@ def annoying_number_word(sent, i):
 def extract_numbers(sent):
     sent_nums = []
     i = 0
-    # print(sent)
     while i < len(sent):
         toke = sent[i]
         a_number = False
