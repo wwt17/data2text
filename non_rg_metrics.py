@@ -89,8 +89,9 @@ def calc_precrec(gold_items, pred_items):
         total_gold += len(gold_item_list)
     avg_prec = total_tp / total_pred
     avg_rec = total_tp / total_gold
-    print("totals:", total_tp, total_pred, total_gold)
-    print("prec:", avg_prec, "rec:", avg_rec)
+    print("total_tp: {} total_pred: {} total_gold: {}".format(
+        total_tp, total_pred, total_gold))
+    print("prec: {} rec: {}".format(avg_prec, avg_rec))
     return avg_prec, avg_rec
 
 def norm_dld(l1, l2):
